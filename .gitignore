@@ -1,0 +1,13 @@
+# ORCA population log files (large data files, not for version control)
+*.pop.log
+
+# Jupyter notebooks
+*.ipynb
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
