@@ -131,9 +131,22 @@ Two consequences worth knowing up front:
   restricted calculation prints the population table with no spin header, and the tab
   reports "No Loewdin sections found". Run `UKS`/`UHF` if you need this tab, or see
   [issue #3](https://github.com/follmerlab/whalewatcher/issues/3).
-- **Below-threshold contributions are missing.** ORCA truncates the table at a print
-  threshold (commonly 0.1%). Group sums therefore undercount slightly, and a column will
-  not add to exactly 100%. Treat the numbers as percentages of the printed population.
+- **A large fraction of the population is missing, not a sliver.** ORCA applies a print
+  threshold (0.1%) and rounds to one decimal, so every contribution under ~0.05% prints as
+  `0.0`. With a large basis that tail is substantial. Measured across all 2062 MOs of a
+  Cu dimer at def2-TZVPP:
+
+  | column sum | |
+  |---|---|
+  | median | 80.2% |
+  | minimum | 70.8% |
+  | MOs summing under 95% | 1898 of 2062 |
+
+  So a fully assigned stack typically tops out near 80%, and group character read off the
+  plot is systematically low by roughly a fifth. Do not read a bar height as an absolute
+  percentage of the MO — compare bars to each other, and if you need absolute numbers,
+  normalise by the column total. See
+  [issue #10](https://github.com/follmerlab/whalewatcher/issues/10).
 
 Energies are stored in Hartree and converted to eV for display at 27.2114 eV/Ha.
 
@@ -175,9 +188,12 @@ Stacked bars, one per frontier MO, x-axis running HOMO−n → LUMO+n. Bar heigh
 Loewdin percentage for that group. The red dashed line sits in the HOMO/LUMO gap.
 
 Anything you did not assign to a group is simply not drawn, so a short bar means either
-genuinely low character or basis functions you left out. There is no "remainder" bar. If
-your stacks are consistently coming up around 60%, you are probably missing functions
-rather than looking at a real result.
+genuinely low character or basis functions you left out. There is no "remainder" bar.
+
+Combined with the print-threshold loss above, this makes absolute bar heights hard to
+interpret: a fully assigned MO already lands near 80%, so a stack at 60% could be either
+missing functions or a real result. Compare bars against each other rather than against
+100%, and sanity-check group totals in the table.
 
 ### Table tab
 
@@ -208,20 +224,48 @@ Tracked as GitHub issues. The ones most likely to bite you:
 | [6](https://github.com/follmerlab/whalewatcher/issues/6) | Basis-function rows are dropped silently when the column count does not match |
 | [7](https://github.com/follmerlab/whalewatcher/issues/7) | No test fixtures, so no ORCA version is verified |
 | [8](https://github.com/follmerlab/whalewatcher/issues/8) | Header-role detection can bind the energy row to occupations |
+| [15](https://github.com/follmerlab/whalewatcher/issues/15) | Section detection also matches the `ORBITAL ENERGIES` block, wasting a full scan of the file |
+
+Of these, only #15 is confirmed to occur on real output. #4, #6, and #8 are latent paths that
+did not trigger on the test file — see the validation comments on each.
 
 Full list: <https://github.com/follmerlab/whalewatcher/issues>
 
 ## ORCA compatibility
 
-Developed against ORCA 5.x output. The frequency and geometry blocks have been stable
-across ORCA 4, 5, and 6, so the Vibrational Modes tab is expected to work broadly.
+The frequency and geometry blocks have been stable across ORCA 4, 5, and 6, so the
+Vibrational Modes tab is expected to work broadly. It has not been run against a fixture
+here.
 
-The population table's exact column layout and row-label spelling have changed between
-major releases, and the repo carries no fixtures to pin this down — so the Orbital Analysis
-tab is only known-good on the files it was written against. If your file parses to zero
-groups or drops rows, that is the first thing to suspect. Attaching a trimmed sample to
+The Orbital Analysis tab has been validated end to end on one file:
+
+| | |
+|---|---|
+| Method | `! BP86 def2-TZVPP def2/J def2-TZVPP/C UKS RIJCOSX D3 CPCM` |
+| System | Cu dimer, 2062 basis functions, 2062 MOs per spin |
+| Size | 205 MB, 2.66M lines, 692 column blocks |
+| Parse time | 38.8 s |
+| Result | both spin channels recovered, all 2062 basis functions, MO numbers / energies / occupations in sync, HOMO–LUMO 2.374 eV |
+
+What that does **not** cover:
+
+- **Restricted output.** The test file is UKS. Closed-shell is known broken
+  ([#3](https://github.com/follmerlab/whalewatcher/issues/3)), not merely unverified.
+- **Spin-polarised output.** The test file is multiplicity 1 and its two channels are
+  identical, so it confirms the channels parse independently but not that a genuinely
+  polarised case is handled.
+- **Other ORCA releases.** The four-header-line block layout and the two-token row labels
+  (`0Cu  6s` → `0Cu_6s`) hold for this file. Both are assumptions, not documented guarantees.
+
+If your file parses to zero groups or loses rows, that is the first thing to suspect.
+Attaching a trimmed sample to
 [issue #7](https://github.com/follmerlab/whalewatcher/issues/7) is the fastest way to get
 your version supported.
+
+One thing not to mistake for a bug: the top virtuals of a decontracted auxiliary basis can
+carry eigenvalues in the millions of Hartree. In the test file MO 2061 sits at
+2.36 × 10⁷ Eh, verbatim from the log. That is real, and any future range-checking on
+energies has to tolerate it.
 
 ## Layout
 

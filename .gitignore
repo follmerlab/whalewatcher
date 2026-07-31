@@ -1,5 +1,6 @@
-# ORCA population log files (large data files, not for version control)
+# ORCA population logs. Routinely 100-200 MB; regenerable from the input.
 *.pop.log
+*.pop.out
 
 # Jupyter notebooks
 *.ipynb
