@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>whalewatcher (small-size variant)</title>
+  <desc>Reduced artwork for the 16 and 32 px icon slots: orca only, enlarged,
+        no binoculars and no water, so something still reads at favicon size.</desc>
+
+  <defs>
+    <clipPath id="badgeClip">
+      <circle cx="256" cy="256" r="236"/>
+    </clipPath>
+
+    <!-- Orca enlarged to ~1.3x the detailed variant and simplified: the fluke
+         notch is shallow rather than deep, and the dorsal fin is fattened, so
+         both survive a 16 px downsample instead of dissolving. -->
+    <path id="orcaSmall" d="
+      M 62 300
+      C 68 262, 112 230, 178 220
+      C 220 214, 250 216, 272 221
+      C 281 192, 294 164, 308 136
+      C 318 168, 329 204, 340 232
+      C 378 240, 414 252, 442 268
+      C 460 256, 478 248, 494 245
+      C 490 266, 476 278, 456 287
+      C 476 295, 490 308, 496 326
+      C 470 322, 436 308, 406 292
+      C 352 322, 300 336, 240 338
+      C 168 340, 90 326, 62 300
+      Z"/>
+
+    <clipPath id="smallClip">
+      <use href="#orcaSmall"/>
+    </clipPath>
+  </defs>
+
+  <circle cx="256" cy="256" r="236" fill="#8ED8EC"/>
+
+  <use href="#orcaSmall" fill="#101A28"/>
+
+  <g clip-path="url(#smallClip)">
+    <!-- Belly as an oversized ellipse clipped to the body; see the detailed
+         variant for why the traced outline was abandoned. -->
+    <ellipse cx="242" cy="424" rx="234" ry="112" fill="#FFFFFF"/>
+    <ellipse cx="140" cy="282" rx="31" ry="18"
+             transform="rotate(-20 140 282)" fill="#FFFFFF"/>
+  </g>
+
+  <circle cx="256" cy="256" r="236" fill="none" stroke="#14556B" stroke-opacity="0.35" stroke-width="8"/>
+</svg>

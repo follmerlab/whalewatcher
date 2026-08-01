@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>whalewatcher</title>
+  <desc>Orca in a circular badge with binoculars trained on it. Detailed variant, for 48px and above.</desc>
+
+  <defs>
+    <clipPath id="badgeClip">
+      <circle cx="256" cy="256" r="236"/>
+    </clipPath>
+
+    <!-- Orca silhouette.
+         Longer/slimmer torpedo body than v1, blunt melon snout, dorsal fin
+         reduced ~35%, and a broad horizontal fluke - whale tails are
+         horizontal, a vertical crescent is what made v1 read as a fish. -->
+    <path id="orcaBody" d="
+      M 104 300
+      C 106 276, 134 254, 184 246
+      C 218 241, 240 242, 258 245
+      C 266 222, 277 201, 290 178
+      C 298 202, 307 230, 316 250
+      C 348 255, 378 264, 402 276
+      C 428 266, 458 258, 488 255
+      C 484 272, 471 281, 453 287
+      C 471 293, 486 303, 492 318
+      C 468 316, 437 304, 409 291
+      C 366 310, 322 322, 272 324
+      C 206 326, 134 318, 104 300
+      Z"/>
+
+    <clipPath id="bodyClip">
+      <use href="#orcaBody"/>
+    </clipPath>
+  </defs>
+
+  <!-- ============ badge background ============ -->
+  <circle cx="256" cy="256" r="236" fill="#8ED8EC"/>
+
+  <g clip-path="url(#badgeClip)">
+
+    <!-- ============ watcher: binoculars, front-on, behind the orca ============
+         Scaled to ~0.86 of the first pass so they read as an observer rather
+         than competing with the whale for the eye. -->
+    <g transform="translate(256 118) scale(0.86) translate(-256 -118)">
+      <rect x="150" y="48" width="74" height="33" rx="14" fill="#16283A"/>
+      <rect x="288" y="48" width="74" height="33" rx="14" fill="#16283A"/>
+      <rect x="234" y="88" width="44" height="50" rx="12" fill="#16283A"/>
+      <circle cx="187" cy="118" r="58" fill="#16283A"/>
+      <circle cx="325" cy="118" r="58" fill="#16283A"/>
+      <circle cx="187" cy="118" r="38" fill="#5EC4E0"/>
+      <circle cx="325" cy="118" r="38" fill="#5EC4E0"/>
+      <path d="M 165 99 A 32 32 0 0 1 203 92 L 194 103 A 23 23 0 0 0 173 109 Z"
+            fill="#FFFFFF" opacity="0.7"/>
+      <path d="M 303 99 A 32 32 0 0 1 341 92 L 332 103 A 23 23 0 0 0 311 109 Z"
+            fill="#FFFFFF" opacity="0.7"/>
+    </g>
+
+    <!-- ============ water: sine profile, nods at the vibrational-mode tab ============ -->
+    <path d="M -10 404
+             C 55 378, 120 378, 185 404
+             C 250 430, 315 430, 380 404
+             C 445 378, 500 378, 522 394
+             L 522 522 L -10 522 Z"
+          fill="#3FA8CC"/>
+    <path d="M -10 434
+             C 55 408, 120 408, 185 434
+             C 250 460, 315 460, 380 434
+             C 445 408, 500 408, 522 424
+             L 522 522 L -10 522 Z"
+          fill="#2A8CB0"/>
+  </g>
+
+  <!-- ============ orca ============ -->
+  <use href="#orcaBody" fill="#101A28"/>
+
+  <g clip-path="url(#bodyClip)">
+    <!-- White underside. Drawn as an oversized ellipse whose top edge cuts
+         across the body at y~295, rather than a traced outline: the traced
+         version sat below the silhouette's lower edge and was almost entirely
+         eaten by the clip. Everything below the cut becomes belly. -->
+    <ellipse cx="244" cy="408" rx="214" ry="104" fill="#FFFFFF"/>
+
+    <!-- A flank blaze was tried here and removed: at this scale it merged with
+         the belly into one white mass that ran into the flukes and read as a
+         detached tail. The belly alone carries the two-tone cue. -->
+
+    <!-- single anatomically-placed eye patch.
+         The grey saddle patch from the previous pass was removed: at every size
+         it read as a chip out of the whale's back rather than as marking. -->
+    <ellipse cx="168" cy="280" rx="26" ry="15"
+             transform="rotate(-20 168 280)" fill="#FFFFFF"/>
+  </g>
+
+  <circle cx="256" cy="256" r="236" fill="none" stroke="#14556B" stroke-opacity="0.35" stroke-width="8"/>
+</svg>

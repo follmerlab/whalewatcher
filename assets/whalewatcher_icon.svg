@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>whalewatcher</title>
+  <desc>An orca seen through a telescope: the badge itself is the eyepiece field,
+        framed by the barrel, with edge vignette and a glass glint. No reticle.</desc>
+
+  <defs>
+    <clipPath id="fieldClip">
+      <circle cx="256" cy="256" r="216"/>
+    </clipPath>
+
+    <!-- Field stop. Kept thin, dark and nearly flat: a thick lit metal ring
+         reads as a ship's porthole, which is the wrong instrument. A telescope
+         eyepiece is a narrow black aperture and heavy edge falloff. -->
+    <linearGradient id="barrelGrad" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0%"   stop-color="#22384E"/>
+      <stop offset="45%"  stop-color="#111F2E"/>
+      <stop offset="100%" stop-color="#060D16"/>
+    </linearGradient>
+
+    <!-- Edge falloff. The single strongest "looking down a tube" cue, and it
+         survives downsampling because it is a large-scale luminance ramp
+         rather than fine detail. Deepened and pulled further in than the first
+         pass to push the read from porthole toward eyepiece. -->
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="50%"  stop-color="#04101C" stop-opacity="0"/>
+      <stop offset="78%"  stop-color="#04101C" stop-opacity="0.13"/>
+      <stop offset="90%"  stop-color="#04101C" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#04101C" stop-opacity="0.86"/>
+    </radialGradient>
+
+    <linearGradient id="glint" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Orca. Same silhouette as the binoculars variant. -->
+    <path id="orcaBody" d="
+      M 104 300
+      C 106 276, 134 254, 184 246
+      C 218 241, 240 242, 258 245
+      C 266 222, 277 201, 290 178
+      C 298 202, 307 230, 316 250
+      C 348 255, 378 264, 402 276
+      C 428 266, 458 258, 488 255
+      C 484 272, 471 281, 453 287
+      C 471 293, 486 303, 492 318
+      C 468 316, 437 304, 409 291
+      C 366 310, 322 322, 272 324
+      C 206 326, 134 318, 104 300
+      Z"/>
+
+    <!-- Re-centred and scaled into the smaller field. With the binoculars gone
+         the whale gets the whole aperture, so it lands ~15% larger on screen
+         than in the binoculars variant despite the field being tighter. -->
+    <g id="orcaPlaced" transform="translate(256 272) scale(0.90) translate(-298 -251)">
+      <use href="#orcaBody" fill="#101A28"/>
+      <g clip-path="url(#bodyClipScope)">
+        <ellipse cx="244" cy="408" rx="214" ry="104" fill="#FFFFFF"/>
+        <ellipse cx="168" cy="280" rx="26" ry="15"
+                 transform="rotate(-20 168 280)" fill="#FFFFFF"/>
+      </g>
+    </g>
+
+    <clipPath id="bodyClipScope">
+      <use href="#orcaBody"/>
+    </clipPath>
+  </defs>
+
+  <!-- ============ barrel ============ -->
+  <circle cx="256" cy="256" r="236" fill="url(#barrelGrad)"/>
+
+  <!-- ============ field of view ============ -->
+  <circle cx="256" cy="256" r="216" fill="#8ED8EC"/>
+
+  <g clip-path="url(#fieldClip)">
+    <!-- sea, sine profile: still nods at the vibrational-mode tab -->
+    <path d="M 30 372
+             C 88 348, 146 348, 204 372
+             C 262 396, 320 396, 378 372
+             C 436 348, 480 348, 500 362
+             L 500 500 L 30 500 Z"
+          fill="#3FA8CC"/>
+    <path d="M 30 400
+             C 88 376, 146 376, 204 400
+             C 262 424, 320 424, 378 400
+             C 436 376, 480 376, 500 390
+             L 500 500 L 30 500 Z"
+          fill="#2A8CB0"/>
+
+    <use href="#orcaPlaced"/>
+
+    <!-- vignette sits above the scene, as it would in a real eyepiece -->
+    <circle cx="256" cy="256" r="216" fill="url(#vignette)"/>
+
+    <!-- glass glint across the upper left; kept off the whale so it does not
+         wash out the two-tone body -->
+    <ellipse cx="168" cy="150" rx="176" ry="52"
+             transform="rotate(-40 168 150)" fill="url(#glint)"/>
+  </g>
+
+  <!-- field stop: hard inner edge where the barrel cuts the image -->
+  <circle cx="256" cy="256" r="216" fill="none"
+          stroke="#060F1A" stroke-opacity="0.55" stroke-width="7"/>
+  <!-- Catchlight on the lower-right inner wall. Round caps and both ends
+       buried in the vignette: with butt caps the arc terminated abruptly and
+       left a visible stub notch on the right edge. -->
+  <path d="M 452 347 A 216 216 0 0 1 275 471"
+        fill="none" stroke="#7FB4CE" stroke-opacity="0.38" stroke-width="4"
+        stroke-linecap="round"/>
+  <!-- outer edge definition -->
+  <circle cx="256" cy="256" r="233" fill="none"
+          stroke="#060F1A" stroke-opacity="0.45" stroke-width="6"/>
+</svg>
