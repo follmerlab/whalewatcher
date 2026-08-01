@@ -8,6 +8,7 @@ Usage:
     python3 orca_vib_viewer.py [path/to/file.out]
 """
 
+import os
 import sys
 import re
 import math
@@ -63,6 +64,11 @@ GROUP_COLOR_CYCLE = [
 
 
 # ---------- ORCA frequency/geometry parser ----------
+
+def _short_filename(path):
+    """Return a filename for paths using either platform's separator."""
+    return os.path.basename(path.replace("\\", os.sep))
+
 
 def parse_orca_output(path):
     """Return (atoms, coords, freqs, modes).
@@ -566,7 +572,7 @@ class OrcaVibViewer(tk.Tk):
             self.anim.event_source.stop()
             self.anim = None
 
-        short_name = path.split("/")[-1]
+        short_name = _short_filename(path)
         self.file_label.config(
             text=f"{short_name}  |  {len(atoms)} atoms  |  {len(freqs)} modes"
         )
@@ -1042,7 +1048,7 @@ class OrcaVibViewer(tk.Tk):
             )
             self._populate_orbital_list()
 
-            short = path.replace("\\", "/").split("/")[-1]
+            short = _short_filename(path)
             spins = [k.replace("spin_", "") for k in self.loewdin_data]
             self.pop_file_label.config(
                 text=f"{short}  |  {len(self._avail_orbitals)} basis fns  |  spins: {', '.join(spins)}"
