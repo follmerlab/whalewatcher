@@ -118,16 +118,23 @@ throws away the antialiasing that makes a small icon readable.
 Playwright does the rasterising and Pillow handles the `.ico` and contact sheet. Both are
 already dependencies of the project's tooling; the pipeline is fully reproducible.
 
-## Using it as the Tk window icon
+## Wiring into the app
 
-Not wired into `orca_vib_viewer.py` — that is an application change, not an asset. To
-apply it:
+`OrcaVibViewer._set_window_icon()` applies it, called from `__init__`. Three paths:
 
-```python
-import pathlib, tkinter as tk
-ico = pathlib.Path(__file__).parent / "assets" / "whalewatcher.ico"
-self.iconbitmap(default=str(ico))          # Windows
-# self.iconphoto(True, tk.PhotoImage(file=".../whalewatcher_detailed_64.png"))  # Linux/macOS
-```
+1. **Windows** — `iconbitmap(default=...)` with `whalewatcher.ico`. All six sizes live in
+   the one file, so the title bar, taskbar and Alt-Tab each get artwork matched to their
+   slot rather than one bitmap scaled badly. `default=True` covers future toplevels.
+2. **Linux / macOS** — non-Windows Tk builds raise `TclError` on `.ico`, which is caught,
+   falling through to `iconphoto` with the 256/128/64/48/32/16 PNGs. The window manager
+   picks. Needs Tk 8.6+ for PNG support.
+3. **Assets missing** — every failure path falls through silently to Tk's default feather.
+   A missing icon must never stop the viewer opening.
 
-`iconbitmap` is Windows-only; on Linux and macOS use `iconphoto` with a PNG.
+One non-obvious detail: Tk does not retain a reference to `PhotoImage` objects. They are
+held on `self._icon_images`; without that they are garbage collected and the icon silently
+reverts to the default.
+
+All three paths were exercised against a live Tk root — the `.ico` branch, the PNG
+fallback (forced by simulating a Tk that rejects `.ico`, confirming all six images load),
+and the missing-assets branch.

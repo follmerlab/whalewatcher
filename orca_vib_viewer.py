@@ -11,6 +11,7 @@ Usage:
 import sys
 import re
 import math
+import pathlib
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -350,6 +351,7 @@ class OrcaVibViewer(tk.Tk):
         self.title("ORCA Vibrational Mode Viewer")
         self.geometry("1300x760")
         self.resizable(True, True)
+        self._set_window_icon()
 
         # Vibrational modes data
         self.atoms = None
@@ -377,6 +379,49 @@ class OrcaVibViewer(tk.Tk):
 
         if filepath:
             self._load_file(filepath)
+
+    # ------ Window icon ------
+
+    def _set_window_icon(self):
+        """Apply the whalewatcher icon to the window, taskbar and Alt-Tab.
+
+        Best-effort on purpose: a missing, unreadable or unsupported asset must
+        never stop the viewer from opening, so every failure path falls through
+        to Tk's default feather rather than raising.
+        """
+        assets = pathlib.Path(__file__).resolve().parent / "assets"
+
+        # Windows. The .ico carries all six sizes, so the title bar, taskbar and
+        # Alt-Tab each get artwork matched to their slot instead of one bitmap
+        # scaled badly. default=True applies it to future toplevels too.
+        ico = assets / "whalewatcher.ico"
+        if ico.is_file():
+            try:
+                self.iconbitmap(default=str(ico))
+                return
+            except tk.TclError:
+                pass    # non-Windows Tk builds reject .ico; fall through
+
+        # Linux / macOS. Hand iconphoto several resolutions and let the window
+        # manager choose. Requires Tk 8.6+ for PNG support.
+        images = []
+        for size in (256, 128, 64, 48, 32, 16):
+            png = assets / f"whalewatcher_icon_{size}.png"
+            if not png.is_file():
+                continue
+            try:
+                images.append(tk.PhotoImage(file=str(png)))
+            except tk.TclError:
+                pass
+        if images:
+            # Tk does not retain a reference to PhotoImage objects. Without
+            # holding them on the instance they are garbage collected and the
+            # icon silently reverts to the default.
+            self._icon_images = images
+            try:
+                self.iconphoto(True, *images)
+            except tk.TclError:
+                pass
 
     # ------ UI construction ------
 
