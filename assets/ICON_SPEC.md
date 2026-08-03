@@ -108,6 +108,14 @@ on demand.
 
 ## Regenerating
 
+**Not needed to run the app.** Every raster is committed — `whalewatcher.ico` and
+`whalewatcher_icon_{16,32,48,64,128,256,512}.png` — and `orca_vib_viewer.py` loads those
+files directly. Clone and run; nothing here is a build step.
+
+`make_icon.py` is a maintainer tool, only for regenerating the rasters after editing
+`whalewatcher_icon.svg`. It is the only thing that needs Playwright and Chromium, which are
+deliberately *not* project dependencies.
+
 ```bash
 python make_icon.py
 ```
