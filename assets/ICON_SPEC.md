@@ -98,11 +98,13 @@ Each of these was rendered and looked at before being cut.
 
 | File | Status |
 |---|---|
-| `whalewatcher_icon.svg` | **canonical master** (copy of the scope variant) |
-| `whalewatcher_icon_scope.svg` | **shipped** — telescope framing, used for every `.ico` size |
-| `whalewatcher_icon_binoculars.svg` | superseded; watcher drawn as an object in the scene |
-| `whalewatcher_icon_eyes.svg` | superseded; playful rather than professional |
-| `whalewatcher_icon_small.svg` | flat mark, no scope framing; kept for contexts wanting one |
+| `whalewatcher_icon.svg` | **canonical master and shipped artwork** — telescope framing, used for every `.ico` size |
+| `variants/whalewatcher_icon_binoculars.svg` | superseded; watcher drawn as an object in the scene |
+| `variants/whalewatcher_icon_eyes.svg` | superseded; playful rather than professional |
+| `variants/whalewatcher_icon_small.svg` | flat mark, no scope framing; kept for contexts wanting one |
+
+Variants are not built by default. `make_icon.py binoculars` (or `eyes` / `flat`) renders one
+on demand.
 
 ## Regenerating
 
@@ -120,21 +122,58 @@ already dependencies of the project's tooling; the pipeline is fully reproducibl
 
 ## Wiring into the app
 
-`OrcaVibViewer._set_window_icon()` applies it, called from `__init__`. Three paths:
+`OrcaVibViewer._set_window_icon()` applies it, called from `__init__`:
 
-1. **Windows** — `iconbitmap(default=...)` with `whalewatcher.ico`. All six sizes live in
-   the one file, so the title bar, taskbar and Alt-Tab each get artwork matched to their
-   slot rather than one bitmap scaled badly. `default=True` covers future toplevels.
-2. **Linux / macOS** — non-Windows Tk builds raise `TclError` on `.ico`, which is caught,
-   falling through to `iconphoto` with the 256/128/64/48/32/16 PNGs. The window manager
-   picks. Needs Tk 8.6+ for PNG support.
+1. **All platforms** — `iconphoto(False, *pngs)` with the 256/128/64/48/32/16 PNGs. The
+   `default` flag is the load-bearing detail: `iconphoto(True, ...)` and
+   `iconbitmap(default=...)` set only the application/class default and leave the window's
+   own icon slots empty (`WM_GETICON` returns null). `default=False` issues `WM_SETICON`
+   against this window. Measured directly:
+
+   | call | `WM_GETICON` |
+   |---|---|
+   | `iconphoto(True, ...)` | `(0, 0, 0)` |
+   | `iconphoto(False, ...)` | real handles, distinct for small and big |
+
+2. **Windows, additionally** — `iconbitmap(default=...)` with the `.ico`, applied *after*
+   step 1 (verified not to disturb it), so message boxes and future toplevels inherit it.
 3. **Assets missing** — every failure path falls through silently to Tk's default feather.
    A missing icon must never stop the viewer opening.
+
+`set_windows_app_id()` runs before `super().__init__()`, since the taskbar reads process
+identity at window-creation time. It gives the app its own taskbar button instead of
+grouping under `python.exe`. It does **not** fix the taskbar icon — see below.
 
 One non-obvious detail: Tk does not retain a reference to `PhotoImage` objects. They are
 held on `self._icon_images`; without that they are garbage collected and the icon silently
 reverts to the default.
 
-All three paths were exercised against a live Tk root — the `.ico` branch, the PNG
+### Known limitation: Windows taskbar shows the Tk feather
+
+Title bar and Alt-Tab are correct. The taskbar button is not, and it is not for want of
+trying. What was established by measurement:
+
+- the window's `WM_GETICON` handles were extracted and rendered — they contain the orca
+- the window class `GCLP_HICON` / `GCLP_HICONSM` likewise contain the orca
+- enumerating the process's windows found exactly one taskbar-eligible window, carrying
+  those correct icons — no stray Tk window owning the button
+- `python.exe`'s own embedded icon is the Python logo, not a feather, so the taskbar is not
+  simply showing the interpreter's icon
+
+Things tried that changed nothing: raw win32 `LoadImageW` + `WM_SETICON`, overwriting the
+class icon with `SetClassLongPtr`, clearing the AppUserModelID, and setting a fresh unused
+one.
+
+That exhausts what a process can do to its own windows, which points at the shell icon
+cache — plausibly keyed on the interpreter path, so every Tk script on this interpreter
+inherits whatever was cached first. The durable fixes both live outside the process:
+launch via a `.lnk` carrying the icon and a matching AppUserModelID, or freeze to an `.exe`
+with the icon as a resource. Neither is worth it for a lab tool right now. Tracked as
+[issue #17](https://github.com/follmerlab/whalewatcher/issues/17).
+
+The `iconphoto(False, ...)` call is still doing real work regardless — it is what makes the
+icon correct on Linux and macOS, where `.ico` is not supported at all.
+
+Earlier paths were exercised against a live Tk root — the `.ico` branch, the PNG
 fallback (forced by simulating a Tk that rejects `.ico`, confirming all six images load),
 and the missing-assets branch.

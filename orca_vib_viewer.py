@@ -340,6 +340,33 @@ def _parse_column_block(file_handle):
     return None, spin_line
 
 
+# ---------- Windows taskbar identity ----------
+
+WINDOWS_APP_ID = "follmerlab.whalewatcher.orcavibviewer"
+
+
+def set_windows_app_id(app_id=WINDOWS_APP_ID):
+    """Give the process its own taskbar identity on Windows.
+
+    Without this the taskbar button is grouped under python.exe's
+    AppUserModelID alongside every other script running on the same
+    interpreter. An explicit id gives the app its own button.
+
+    This does NOT fix the taskbar icon. See _set_window_icon for what was
+    measured. Kept because separate grouping is correct behaviour on its own.
+
+    Must run before the first window is created, hence the call ahead of
+    Tk.__init__. No-op off Windows, and never fatal.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
 # ---------- Main application ----------
 
 class OrcaVibViewer(tk.Tk):
@@ -347,6 +374,9 @@ class OrcaVibViewer(tk.Tk):
     AMPLITUDE = 0.4   # max displacement in Angstrom (scaled to mode vector)
 
     def __init__(self, filepath=None):
+        # Before super(), which creates the window: the taskbar reads the
+        # process identity at window-creation time.
+        set_windows_app_id()
         super().__init__()
         self.title("ORCA Vibrational Mode Viewer")
         self.geometry("1300x760")
@@ -391,19 +421,29 @@ class OrcaVibViewer(tk.Tk):
         """
         assets = pathlib.Path(__file__).resolve().parent / "assets"
 
-        # Windows. The .ico carries all six sizes, so the title bar, taskbar and
-        # Alt-Tab each get artwork matched to their slot instead of one bitmap
-        # scaled badly. default=True applies it to future toplevels too.
-        ico = assets / "whalewatcher.ico"
-        if ico.is_file():
-            try:
-                self.iconbitmap(default=str(ico))
-                return
-            except tk.TclError:
-                pass    # non-Windows Tk builds reject .ico; fall through
-
-        # Linux / macOS. Hand iconphoto several resolutions and let the window
-        # manager choose. Requires Tk 8.6+ for PNG support.
+        # Step 1: per-window icons, via iconphoto with default=False.
+        #
+        # The `default` flag matters more than it looks. Both iconphoto(True,..)
+        # and iconbitmap(default=..) set only the application/class default and
+        # leave the window's own icon slots empty, so WM_GETICON returns null.
+        # default=False instead issues WM_SETICON against this window and fills
+        # those slots. Measured by probing WM_GETICON directly:
+        #   iconphoto(True, ...)   -> (0, 0, 0)
+        #   iconphoto(False, ...)  -> real handles, distinct for small and big
+        #
+        # On Linux/macOS this is the only mechanism that works at all.
+        # Needs Tk 8.6+ for PNG support.
+        #
+        # KNOWN LIMITATION, Windows: this does not fix the taskbar button, which
+        # still shows the Tk feather. The window and its class both demonstrably
+        # carry the orca - the handles were extracted and rendered - and the
+        # process is the only taskbar-eligible window it owns. Setting the icon
+        # via raw win32 WM_SETICON, overwriting the class icon, clearing the
+        # AppUserModelID and using a fresh one were all tried and none changed
+        # the taskbar. Title bar and Alt-Tab are correct. The remaining suspect
+        # is the shell icon cache keyed on the interpreter path, which no
+        # in-process call can reach; the fix would be launching via a .lnk that
+        # carries the icon, or freezing to an .exe. Tracked as issue #17.
         images = []
         for size in (256, 128, 64, 48, 32, 16):
             png = assets / f"whalewatcher_icon_{size}.png"
@@ -419,9 +459,19 @@ class OrcaVibViewer(tk.Tk):
             # icon silently reverts to the default.
             self._icon_images = images
             try:
-                self.iconphoto(True, *images)
+                self.iconphoto(False, *images)
             except tk.TclError:
                 pass
+
+        # Step 2, Windows only: the .ico as the class default, so message boxes
+        # and any future toplevel inherit it. Applied after step 1 because it
+        # does not disturb the per-window icons already set.
+        ico = assets / "whalewatcher.ico"
+        if ico.is_file():
+            try:
+                self.iconbitmap(default=str(ico))
+            except tk.TclError:
+                pass    # non-Windows Tk builds reject .ico
 
     # ------ UI construction ------
 
