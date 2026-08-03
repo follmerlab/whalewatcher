@@ -70,10 +70,9 @@ Each of these was rendered and looked at before being cut.
 - **Eye patch as a two-lobed p orbital** (the original brief's preferred fusion) — cut.
   Two white ovals side by side on a head read as googly eyes, not an orbital. Replaced
   with a single anatomically-placed eye patch.
-- **Symmetric watching eyes** — cut from the primary. A symmetric pair inside a circle
-  combines with the badge into an unmistakable smiley face, with the orca as the mouth.
-  Survives in `whalewatcher_icon_eyes.svg` only because the eyes were moved off-centre
-  and rotated, which breaks the gestalt.
+- **Symmetric watching eyes** — cut. A symmetric pair inside a circle combines with the
+  badge into an unmistakable smiley face, with the orca as the mouth. Moving them
+  off-centre and rotating them broke the gestalt, but the scope framing was better still.
 - **Grey saddle patch** — cut. At every size it read as a chip out of the whale's back.
 - **Vertical forked tail** — cut. That is a fish caudal fin; whale flukes are horizontal.
   Reworked into a broad flat fluke, which is most of why the animal stopped reading as a
@@ -94,39 +93,33 @@ Each of these was rendered and looked at before being cut.
 - **Crosshairs / reticle** — never added. Explicitly excluded by the brief, and it would
   have read as a gunsight, which is a bad look for a whale.
 
-## Variants
+## Shipped files
 
-| File | Status |
+| File | Role |
 |---|---|
-| `whalewatcher_icon.svg` | **canonical master and shipped artwork** — telescope framing, used for every `.ico` size |
-| `variants/whalewatcher_icon_binoculars.svg` | superseded; watcher drawn as an object in the scene |
-| `variants/whalewatcher_icon_eyes.svg` | superseded; playful rather than professional |
-| `variants/whalewatcher_icon_small.svg` | flat mark, no scope framing; kept for contexts wanting one |
+| `whalewatcher.ico` | Windows icon, six frames (16/32/48/64/128/256) |
+| `whalewatcher_icon_{16,32,48,64,128,256}.png` | loaded by `iconphoto` at runtime |
+| `whalewatcher_icon_512.png` | for README / GitHub social preview; not loaded by the app |
+| `whalewatcher_icon.svg` | vector master, for reference |
 
-Variants are not built by default. `make_icon.py binoculars` (or `eyes` / `flat`) renders one
-on demand.
+Nothing here is built. The rasters are committed and `orca_vib_viewer.py` opens them
+directly, so the icon needs no toolchain, no build step, and no extra dependencies beyond
+the project's own `numpy` / `matplotlib` / `pandas`. Clone and run.
 
-## Regenerating
+The generator that produced these rasters, the rejected design variants, and the legibility
+contact sheet were intentionally removed from the repo so the artwork is a fixed asset
+rather than something to re-derive per checkout. They remain in git history at `1c5e433`
+if a maintainer ever needs them:
 
-**Not needed to run the app.** Every raster is committed — `whalewatcher.ico` and
-`whalewatcher_icon_{16,32,48,64,128,256,512}.png` — and `orca_vib_viewer.py` loads those
-files directly. Clone and run; nothing here is a build step.
-
-`make_icon.py` is a maintainer tool, only for regenerating the rasters after editing
-`whalewatcher_icon.svg`. It is the only thing that needs Playwright and Chromium, which are
-deliberately *not* project dependencies.
-
-```bash
-python make_icon.py
+```
+git show 1c5e433:assets/make_icon.py
 ```
 
-Renders each master once at 1024 px through headless Chromium, then Lanczos downsamples.
-Downsampling from a high-res render beats rasterising the vector natively at 16 px, which
-throws away the antialiasing that makes a small icon readable.
-
-`cairosvg` was specified in the brief but cannot load libcairo on this machine, so
-Playwright does the rasterising and Pillow handles the `.ico` and contact sheet. Both are
-already dependencies of the project's tooling; the pipeline is fully reproducible.
+For the record of how they were produced: each master was rendered once at 1024 px through
+headless Chromium and Lanczos downsampled. Downsampling from a high-res render beats
+rasterising the vector natively at 16 px, which throws away the antialiasing that makes a
+small icon readable. `cairosvg` could not be used (no libcairo on the build machine), so
+Playwright did the rasterising and Pillow assembled the `.ico`.
 
 ## Wiring into the app
 

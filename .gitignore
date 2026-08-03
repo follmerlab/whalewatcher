@@ -5,6 +5,13 @@
 # Jupyter notebooks
 *.ipynb
 
+# Icon-generation artifacts. The shipped rasters in assets/ are fixed assets;
+# the generator and its intermediates deliberately do not live in the repo.
+assets/make_icon.py
+assets/variants/
+assets/whalewatcher_contactsheet.png
+assets/whalewatcher_*_1024.png
+
 # Python
 __pycache__/
 *.py[cod]
