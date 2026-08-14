@@ -9,6 +9,7 @@ Usage:
 """
 
 import sys
+import os
 import re
 import math
 import pathlib
@@ -340,6 +341,308 @@ def _parse_column_block(file_handle):
     return None, spin_line
 
 
+# ---------- Exact Loewdin populations from S and C ----------
+#
+# ORCA's LOEWDIN ORBITAL POPULATIONS PER MO table is truncated. The header says
+# "THRESHOLD FOR PRINTING IS 0.1%", and that is not a rounding effect: a
+# basis-function row is omitted entirely unless it clears 0.1% for at least one
+# MO in the printed 6-column block. Measured on a Cu dimer at CP(PPP)/def2-TZVPP
+# (2062 basis functions): only 486 of 2062 rows appear in the frontier block and
+# the HOMO column sums to 88.6%, not 100%. At that MO, 1904 functions each
+# contribute under 0.1% and together account for 15.6%. The deficit also varies
+# 8-16% between neighbouring MOs, so it distorts comparisons between MOs and not
+# just absolute values. Raising Print[P_OrbPopMO_L] to 2 does not change it; the
+# threshold is hard-coded.
+#
+# So compute the populations directly instead:
+#
+#     P[u,i] = [ (S^1/2 C)[u,i] ]^2 * 100
+#
+# with S the AO overlap and C the MO coefficients. No threshold anywhere, so
+# each column sums to exactly 100% by construction. Both matrices are printed by
+#
+#     %output Print[P_Overlap] 1  Print[P_MOs] 2 end
+#
+# Symmetry-equivalent atoms coming out with identical populations is a good check
+# that a given file parsed correctly.
+
+_INT_ROW = re.compile(r"^\s*\d+(\s+\d+)*\s*$")
+
+
+def _is_rule(s):
+    """True for a separator line. The MO block writes these as spaced groups
+    ('--------  --------  ...'), the overlap block as one run ('------------'),
+    so spaces have to be stripped before testing - not doing that made the
+    separator fall through to the end-of-section branch."""
+    t = s.replace(" ", "").replace("\t", "")
+    return bool(t) and set(t) <= set("-=")
+
+
+def _is_float(tok):
+    try:
+        float(tok)
+        return True
+    except ValueError:
+        return False
+
+
+def _read_nbas(path, max_lines=200000):
+    """Contracted basis-function count from the ORCA header."""
+    pats = (re.compile(r"Number of basis functions\s*\.*\s*(\d+)"),
+            re.compile(r"Basis Dimension\s+Dim\s*\.*\s*(\d+)"))
+    with open(path, "r", errors="replace") as fh:
+        for i, line in enumerate(fh):
+            for p in pats:
+                m = p.search(line)
+                if m:
+                    return int(m.group(1))
+            if i > max_lines:
+                break
+    raise ValueError("Could not find the basis-function count in the header. "
+                     "Is this a full ORCA output?")
+
+
+def _read_overlap(path, nbas):
+    """Parse the OVERLAP MATRIX block into an (nbas, nbas) array.
+
+    Rows look like:  '      0       1.000000   0.858812  ...'
+    """
+    S = np.zeros((nbas, nbas))
+    seen = 0
+    with open(path, "r", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("OVERLAP MATRIX"):
+                break
+        else:
+            raise ValueError("No OVERLAP MATRIX block found. Add "
+                             "Print[P_Overlap] 1 to the %output block.")
+        cols = None
+        for line in fh:
+            s = line.strip()
+            if not s or _is_rule(s):
+                continue
+            if _INT_ROW.match(line):
+                cols = [int(x) for x in s.split()]
+                continue
+            parts = s.split()
+            try:
+                r = int(parts[0])
+                vals = [float(x) for x in parts[1:]]
+            except (ValueError, IndexError):
+                break            # left the matrix, next section reached
+            if cols is None or r >= nbas:
+                continue
+            n = min(len(vals), len(cols))
+            S[r, cols[:n]] = vals[:n]
+            seen += n
+    if seen < nbas:
+        raise ValueError(f"OVERLAP MATRIX looks truncated ({seen} elements).")
+    return S
+
+
+def _dash_runs(s):
+    """Spans of consecutive '-' in a line, as (start, end_exclusive)."""
+    runs, j = [], 0
+    while j < len(s):
+        if s[j] == "-":
+            k = j
+            while k < len(s) and s[k] == "-":
+                k += 1
+            runs.append((j, k))
+            j = k
+        else:
+            j += 1
+    return runs
+
+
+def _read_mo_matrices(path, nbas):
+    """Parse MOLECULAR ORBITALS into one (C, labels, energies, occs) per spin.
+
+    Block layout is four header lines then one row per basis function:
+
+        <column indices>
+        <orbital energies, Eh>
+        <occupation numbers>
+        --------  --------
+        0Cu  1s    0.000000  0.000002 ...
+
+    A spin boundary is a column-index line that restarts at or below the highest
+    index already seen. ORCA prints no spin marker there, just a blank line.
+
+    Columns are FIXED WIDTH and must be sliced, not split. ORCA writes each
+    coefficient right-aligned in a 10-character field with no guaranteed
+    separator, so adjacent values run together once one is wide enough:
+
+        55C   5s       -10.084917-10.367585 -8.599721-30.294783
+
+    str.split() turns that into '-10.084917-10.367585', which is not a float.
+    Splitting silently skipped such rows, which shifted every later row in the
+    same block and corrupted the coefficients. The field geometry is taken from
+    the dashes line of each block rather than hard-coded, so it follows ORCA if
+    the widths ever change. The same treatment is applied to the energy and
+    occupation header rows, which can glue for deep core levels.
+    """
+    out = []
+    with open(path, "r", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("MOLECULAR ORBITALS"):
+                break
+        else:
+            raise ValueError("No MOLECULAR ORBITALS block found. Add "
+                             "Print[P_MOs] 2 to the %output block.")
+
+        def _new():
+            return (np.zeros((nbas, nbas)), [None] * nbas, [0.0] * nbas,
+                    [0.0] * nbas)
+
+        C, labels, energies, occs = _new()
+        cols, row, seen_max, started = None, 0, -1, False
+        slices, label_end, pending = None, 0, []
+
+        def _slice_vals(raw):
+            """Values for one row, or None if any field is not a number."""
+            vals = []
+            for a, b in slices:
+                seg = raw[a:b].strip() if a < len(raw) else ""
+                if not seg:
+                    vals.append(0.0)
+                    continue
+                try:
+                    vals.append(float(seg))
+                except ValueError:
+                    return None
+            return vals
+
+        for raw in fh:
+            raw = raw.rstrip("\n")
+            s = raw.strip()
+            if not s:
+                continue
+
+            if _INT_ROW.match(raw):
+                new_cols = [int(x) for x in s.split()]
+                if started and new_cols and new_cols[0] <= seen_max:
+                    out.append((C, labels, energies, occs))
+                    C, labels, energies, occs = _new()
+                    seen_max = -1
+                cols, row = new_cols, 0
+                slices, pending = None, []
+                seen_max = max(seen_max, max(new_cols))
+                started = True
+                continue
+
+            if cols is None:
+                continue
+
+            # The block's dashes line defines the field geometry.
+            if slices is None and _is_rule(s):
+                runs = _dash_runs(raw)
+                if len(runs) != len(cols):
+                    continue          # a section underline, not a column ruler
+                pitch = (runs[1][0] - runs[0][0]) if len(runs) > 1 else \
+                        (runs[0][1] - runs[0][0] + 2)
+                slices = [(max(b - pitch, 0), b) for _, b in runs]
+                label_end = max(runs[0][1] - pitch, 0)
+                # Energies then occupations, buffered before the geometry was
+                # known. These rows are space-separated and do NOT share the
+                # coefficient rows' field alignment, so split() first and only
+                # fall back to slicing if the token count disagrees (which
+                # happens if a value is wide enough to glue, e.g. the 1e7 Eh
+                # virtuals of a decontracted auxiliary basis).
+                for k, hraw in enumerate(pending[-2:]):
+                    toks = hraw.split()
+                    if len(toks) == len(cols) and all(_is_float(t) for t in toks):
+                        vals = [float(t) for t in toks]
+                    else:
+                        vals = _slice_vals(hraw)
+                    if vals is None:
+                        continue
+                    tgt = energies if k == 0 else occs
+                    for mo, v in zip(cols, vals):
+                        if mo < nbas:
+                            tgt[mo] = v
+                pending = []
+                continue
+
+            if slices is None:
+                pending.append(raw)   # energy / occupation rows
+                continue
+
+            vals = _slice_vals(raw)
+            if vals is None:
+                break                 # next section's banner: stop
+            name = raw[:label_end].split()
+            if len(name) < 2:
+                continue
+            if row < nbas:
+                labels[row] = f"{name[0]}_{name[1]}"
+                C[row, cols] = vals
+            row += 1
+
+        if started:
+            out.append((C, labels, energies, occs))
+    if not out:
+        raise ValueError("MOLECULAR ORBITALS block present but no coefficients "
+                         "were parsed.")
+    return out
+
+
+def parse_orca_exact_loewdin(path, progress=None):
+    """Exact Loewdin per-MO populations, computed from S and C.
+
+    Returns the same shape as parse_orca_loewdin_populations_streaming so the
+    rest of the app is agnostic: {'spin_up': df, 'spin_down': df} with columns
+    MO_n, rows = basis-function labels, and mo_numbers / mo_energies /
+    mo_occupations in DataFrame.attrs.
+
+    Unlike the printed-table parser every column sums to exactly 100%.
+    """
+    if not HAS_PANDAS:
+        raise ImportError("pandas is required for Loewdin analysis")
+
+    def say(msg):
+        if progress:
+            progress(msg)
+
+    say("reading header…")
+    nbas = _read_nbas(path)
+
+    say(f"parsing overlap matrix ({nbas}x{nbas})…")
+    S = _read_overlap(path, nbas)
+
+    say("building S^1/2…")
+    w, V = np.linalg.eigh(S)
+    del S
+    # Large decontracted bases are near-linearly-dependent; the smallest
+    # eigenvalues can be ~1e-6. Clip at zero so the square root stays real
+    # rather than letting round-off produce NaNs.
+    np.clip(w, 0.0, None, out=w)
+    S_half = (V * np.sqrt(w)) @ V.T
+    del V, w
+
+    say(f"parsing MO coefficients ({nbas}x{nbas})…")
+    mats = _read_mo_matrices(path, nbas)
+
+    keys = ["spin_up", "spin_down"] if len(mats) > 1 else ["spin_up"]
+    results = {}
+    for key, (C, labels, energies, occs) in zip(keys, mats):
+        say(f"computing populations ({key.replace('spin_', '')} spin)…")
+        P = (S_half @ C) ** 2 * 100.0
+        del C
+        idx = [l if l else f"?_{i}" for i, l in enumerate(labels)]
+        df = pd.DataFrame(P, index=idx,
+                          columns=[f"MO_{n}" for n in range(nbas)])
+        del P
+        df.attrs["mo_numbers"] = list(range(nbas))
+        df.attrs["mo_energies"] = energies
+        df.attrs["mo_occupations"] = occs
+        df.attrs["exact"] = True
+        df.attrs["restricted"] = len(mats) == 1
+        results[key] = df
+    say("done")
+    return results
+
+
 # ---------- Windows taskbar identity ----------
 
 WINDOWS_APP_ID = "follmerlab.whalewatcher.orcavibviewer"
@@ -616,7 +919,10 @@ class OrcaVibViewer(tk.Tk):
             self.anim.event_source.stop()
             self.anim = None
 
-        short_name = path.split("/")[-1]
+        # os.path.basename, not split("/"): the Windows file dialog returns
+        # backslashes, so splitting on "/" left the whole path in the label and
+        # pushed the atom and mode counts off the visible width.
+        short_name = os.path.basename(path)
         self.file_label.config(
             text=f"{short_name}  |  {len(atoms)} atoms  |  {len(freqs)} modes"
         )
@@ -847,6 +1153,19 @@ class OrcaVibViewer(tk.Tk):
         topbar = tk.Frame(parent, bd=1, relief=tk.RIDGE, pady=4)
         topbar.pack(fill=tk.X, side=tk.TOP)
         self._orb_topbar = topbar   # ref needed by _load_pop_file
+
+        # Analysis source. "exact" recomputes populations from the overlap and
+        # MO coefficient matrices; "printed table" reads ORCA's own truncated
+        # LOEWDIN ORBITAL POPULATIONS PER MO block. See parse_orca_exact_loewdin
+        # for why the printed table does not sum to 100%.
+        tk.Label(topbar, text="Source:", font=("Helvetica", 9)).pack(
+            side=tk.LEFT, padx=(8, 2))
+        self.pop_mode_var = tk.StringVar(value="auto")
+        self._pop_mode_combo = ttk.Combobox(
+            topbar, textvariable=self.pop_mode_var, state="readonly", width=13,
+            values=["auto", "exact (S,C)", "printed table"])
+        self._pop_mode_combo.pack(side=tk.LEFT, padx=(0, 4))
+
         tk.Button(topbar, text="Open .pop.log…", command=self._open_pop_file,
                   font=("Helvetica", 11)).pack(side=tk.LEFT, padx=8)
         self.pop_file_label = tk.Label(topbar, text="No file loaded", anchor="w",
@@ -1032,6 +1351,7 @@ class OrcaVibViewer(tk.Tk):
             if isinstance(widget, tk.Button):
                 widget.config(state=tk.DISABLED)
 
+        self._pop_mode_combo.config(state=tk.DISABLED)
         self.pop_file_label.config(text="Loading…")
         self.orb_status_label.config(text="")
 
@@ -1041,18 +1361,44 @@ class OrcaVibViewer(tk.Tk):
         self._orb_progress.start(12)
         self.update_idletasks()
 
+        mode = self.pop_mode_var.get()
         result = {}
 
         def _parse():
+            # The exact route needs S and C in the file. In auto mode, fall back
+            # to ORCA's printed table if they are absent rather than failing.
+            if mode in ("auto", "exact (S,C)"):
+                try:
+                    result['data'] = parse_orca_exact_loewdin(
+                        path, progress=lambda m: result.__setitem__('phase', m))
+                    result['method'] = 'exact'
+                    return
+                except Exception as e:
+                    if mode == "exact (S,C)":
+                        result['error'] = (
+                            f"Exact analysis needs the overlap and MO coefficient "
+                            f"matrices in the output.\n\n{e}\n\n"
+                            f"Add to the ORCA input:\n"
+                            f"  %output Print[P_Overlap] 1  Print[P_MOs] 2 end\n\n"
+                            f"Or set Source to 'printed table'.")
+                        return
+                    result['fallback'] = str(e)
             try:
+                result['phase'] = "reading ORCA's printed table…"
                 result['data'] = parse_orca_loewdin_populations_streaming(path)
+                result['method'] = 'printed'
             except Exception as e:
                 result['error'] = str(e)
 
         def _check():
             if t.is_alive():
+                phase = result.get('phase')
+                if phase:
+                    self._orb_loading_label.config(text=phase)
                 self.after(100, _check)
                 return
+            self._orb_loading_label.config(text="Loading file…")
+            self._pop_mode_combo.config(state="readonly")
 
             # Thread done — stop the bar and re-enable the button
             self._orb_progress.stop()
@@ -1080,6 +1426,7 @@ class OrcaVibViewer(tk.Tk):
                 return
 
             self.loewdin_data = data
+            self._pop_method = result.get('method', 'printed')
             all_labels = set()
             for spin_df in self.loewdin_data.values():
                 if spin_df is not None:
@@ -1092,14 +1439,36 @@ class OrcaVibViewer(tk.Tk):
             )
             self._populate_orbital_list()
 
-            short = path.replace("\\", "/").split("/")[-1]
+            short = os.path.basename(path)
             spins = [k.replace("spin_", "") for k in self.loewdin_data]
+            src = ("exact (computed from S and C)" if self._pop_method == 'exact'
+                   else "ORCA printed table (truncated at 0.1%)")
             self.pop_file_label.config(
-                text=f"{short}  |  {len(self._avail_orbitals)} basis fns  |  spins: {', '.join(spins)}"
+                text=f"{short}  |  {len(self._avail_orbitals)} basis fns  "
+                     f"|  spins: {', '.join(spins)}  |  {src}"
             )
-            self.orb_status_label.config(
-                text=f"Loaded {len(self._avail_orbitals)} orbital basis functions"
-            )
+
+            if self._pop_method == 'exact':
+                msg = (f"Loaded {len(self._avail_orbitals)} basis functions — "
+                       f"exact populations, columns sum to 100%")
+            else:
+                msg = (f"Loaded {len(self._avail_orbitals)} basis functions — "
+                       f"printed table; columns sum to <100%, see Total column")
+            self.orb_status_label.config(text=msg)
+
+            # Falling back silently would leave the user reading truncated
+            # numbers while believing they were exact.
+            if 'fallback' in result:
+                messagebox.showinfo(
+                    "Using ORCA's printed table",
+                    "Exact analysis was not possible, so ORCA's printed "
+                    "LOEWDIN ORBITAL POPULATIONS PER MO table was used instead.\n\n"
+                    f"Reason: {result['fallback']}\n\n"
+                    "That table is truncated at a 0.1% print threshold, so group "
+                    "character will read low — typically by 10-15% for a large "
+                    "basis. The Total column shows how much is accounted for.\n\n"
+                    "For exact populations, rerun ORCA with:\n"
+                    "  %output Print[P_Overlap] 1  Print[P_MOs] 2 end")
 
         t = threading.Thread(target=_parse, daemon=True)
         t.start()
@@ -1411,12 +1780,22 @@ class OrcaVibViewer(tk.Tk):
 
         group_names = list(row_group_chars.keys())
 
+        # Total population reported for each MO, over every basis function in the
+        # file rather than only the grouped ones. In exact mode this reads 100.0;
+        # with ORCA's printed table it reads 85-92, which is the fastest way to
+        # see that the shortfall is missing data and not low group character.
+        if df is not None:
+            tot_cols = [f"MO_{mo_numbers[i]}" for i in indices]
+            totals = df[tot_cols].sum(axis=0).values
+        else:
+            totals = np.full(len(indices), np.nan)
+
         # Tear down old tree + scrollbars
         for w in self._table_frame.winfo_children():
             w.destroy()
 
         fixed_cols = ("Orbital", "MO#", "Energy (eV)", "Occ")
-        col_ids = fixed_cols + tuple(group_names)
+        col_ids = fixed_cols + tuple(group_names) + ("Total",)
 
         vsb = ttk.Scrollbar(self._table_frame, orient=tk.VERTICAL)
         hsb = ttk.Scrollbar(self._table_frame, orient=tk.HORIZONTAL)
@@ -1445,6 +1824,8 @@ class OrcaVibViewer(tk.Tk):
         for gname in group_names:
             tree.heading(gname, text=f"{gname} (%)")
             tree.column(gname, width=max(80, len(gname) * 8 + 20), anchor=tk.E)
+        tree.heading("Total", text="Total (%)")
+        tree.column("Total", width=85, anchor=tk.E)
 
         tree.tag_configure("odd",  background="#f5f5f5")
         tree.tag_configure("even", background="#ffffff")
@@ -1456,8 +1837,11 @@ class OrcaVibViewer(tk.Tk):
             e_ev = mo_energies[i] * ha_to_ev
             occ  = mo_occupations[i]
             group_vals = [f"{row_group_chars[g][j]:.1f}" for g in group_names]
+            tot = totals[j] if j < len(totals) else float('nan')
+            tot_str = "—" if tot != tot else f"{tot:.1f}"
 
-            row = (orb_label, str(mo_numbers[i]), f"{e_ev:.4f}", f"{occ:.2f}") + tuple(group_vals)
+            row = ((orb_label, str(mo_numbers[i]), f"{e_ev:.4f}", f"{occ:.2f}")
+                   + tuple(group_vals) + (tot_str,))
             self._table_rows.append(row)
 
             if orb_label == "HOMO":

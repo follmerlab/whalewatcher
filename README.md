@@ -89,64 +89,83 @@ metals Mn through Zn. Anything else falls back to a tan sphere at 1.0 Å.
 
 ## Orbital Analysis tab
 
-### Population mode: what the tab actually consumes
+### Two sources, and why the default is not ORCA's own table
 
-This tab does **not** read a plain ORCA `.out`. It reads a log containing ORCA's Loewdin
-**reduced orbital populations per MO** — the table of per-basis-function percentage
-contributions to each molecular orbital. That block is not printed by default. Request it
-in your input:
+The **Source** selector at the top of the tab picks where populations come from.
+
+| Source | Reads | Columns sum to |
+|---|---|---|
+| `exact (S,C)` | `OVERLAP MATRIX` + `MOLECULAR ORBITALS` | **100%** |
+| `printed table` | `LOEWDIN ORBITAL POPULATIONS PER MO` | 85–92% |
+| `auto` (default) | exact if the matrices are present, else the printed table | — |
+
+**Prefer `exact`.** ORCA's own per-MO table is truncated, and not slightly. Its header says
+`THRESHOLD FOR PRINTING IS 0.1%`, and that is not a rounding effect: a basis-function row is
+omitted *entirely* unless it clears 0.1% for at least one MO in the printed six-column
+block. Measured on a Cu dimer at CP(PPP)/def2-TZVPP, 2062 basis functions:
+
+- only 486 of 2062 rows appear in the frontier block
+- the HOMO column sums to **88.6%**, not 100
+- at that MO, **1904 functions each contribute under 0.1% and together account for 15.6%**
+- the deficit varies **8–16% between neighbouring MOs**, so it distorts comparisons *between*
+  MOs as well as absolute values
+
+Raising `Print[P_OrbPopMO_L]` to 2 does not help — verified, byte-identical output. The
+threshold is hard-coded.
+
+Exact mode sidesteps it by computing the populations rather than reading them:
+
+$$P_{\mu i} = \left[(S^{1/2}C)_{\mu i}\right]^2 \times 100$$
+
+with $S$ the AO overlap and $C$ the MO coefficients. No threshold anywhere, so every column
+sums to 100% by construction.
+
+### Input for exact mode
 
 ```
 %output
-  Print[P_OrbPopMO_L] 1
+  Print[P_Overlap]    1     # AO overlap matrix
+  Print[P_MOs]        2     # MO coefficients
+  Print[P_OrbPopMO_L] 1     # optional: ORCA's own table, for comparison
 end
 ```
 
-Older and newer ORCA releases differ on keyword spelling; `! LargePrint` or
-`! PrintBasis PrintMOs` will also get the block out. Confirm your output contains a section
-headed like
+A single-point job on an existing `.gbw` is enough — no SCF needed:
 
 ```
-LOEWDIN ORBITAL POPULATIONS PER MO
+! ... UKS moread
+%moinp "yourjob.gbw"
+%scf MaxIter 0 end
 ```
 
-before assuming the file is usable.
+Cost: the overlap matrix dominates the file size. The Cu dimer log was 205 MB with it and
+40 MB without. Parsing plus the $S^{1/2}$ diagonalisation took **13 s** for 2062 basis
+functions; it scales as $O(N^3)$, so expect minutes rather than seconds past ~5000.
 
-These logs get large fast — hundreds of MB for a big basis on a metal complex — which is
-why `*.pop.log` is gitignored and why the parser streams the file in column blocks on a
-background thread with a progress bar rather than loading it whole.
+If the matrices are absent, `auto` falls back to the printed table and says so in a dialog
+rather than silently handing you numbers that read 12% low.
+
+### Accuracy of exact mode
+
+Occupied and frontier MOs come out at 100.000% (mean deviation 1×10⁻⁴). High virtuals
+deviate up to ±2%, because ORCA prints coefficients to six decimals and this basis is
+near-linearly-dependent — the smallest overlap eigenvalue is 2×10⁻⁶, which amplifies that
+truncation. It affects only virtuals hundreds of eV above the LUMO. The **Total** column in
+the Table tab shows the sum for every MO, so this is visible rather than assumed.
+
+### Reading either source
+
+Population data is keyed on `SPIN UP` / `SPIN DOWN` in the printed table. Exact mode instead
+detects the spin boundary as a restart of the MO column indices, so **restricted
+calculations work in exact mode** even though the printed-table parser still requires
+unrestricted output ([issue #3](https://github.com/follmerlab/whalewatcher/issues/3)).
+
+One parsing hazard worth knowing if you touch that code: MO coefficients are **fixed-width
+and can run together** — `-10.084917-10.367585` is two values, not one — so those rows are
+sliced by column position, not `split()`.
 
 The `.pop.log` suffix is a lab convention, not an ORCA default. The file picker accepts
-`*.log` and `*.out`, and nothing in the parser depends on the name.
-
-### What the parser expects to find
-
-Population data is read from a `SPIN UP` / `SPIN DOWN` section header. Each column block
-carries four header lines before the dashes — MO numbers, MO energies in Hartree,
-occupation numbers, then the separator — followed by one row per basis function.
-
-Two consequences worth knowing up front:
-
-- **Unrestricted output only.** The parser keys on `SPIN UP` / `SPIN DOWN`. A closed-shell
-  restricted calculation prints the population table with no spin header, and the tab
-  reports "No Loewdin sections found". Run `UKS`/`UHF` if you need this tab, or see
-  [issue #3](https://github.com/follmerlab/whalewatcher/issues/3).
-- **A large fraction of the population is missing, not a sliver.** ORCA applies a print
-  threshold (0.1%) and rounds to one decimal, so every contribution under ~0.05% prints as
-  `0.0`. With a large basis that tail is substantial. Measured across all 2062 MOs of a
-  Cu dimer at def2-TZVPP:
-
-  | column sum | |
-  |---|---|
-  | median | 80.2% |
-  | minimum | 70.8% |
-  | MOs summing under 95% | 1898 of 2062 |
-
-  So a fully assigned stack typically tops out near 80%, and group character read off the
-  plot is systematically low by roughly a fifth. Do not read a bar height as an absolute
-  percentage of the MO — compare bars to each other, and if you need absolute numbers,
-  normalise by the column total. See
-  [issue #10](https://github.com/follmerlab/whalewatcher/issues/10).
+`*.log` and `*.out`, and nothing depends on the name.
 
 Energies are stored in Hartree and converted to eV for display at 27.2114 eV/Ha.
 
@@ -190,15 +209,20 @@ Loewdin percentage for that group. The red dashed line sits in the HOMO/LUMO gap
 Anything you did not assign to a group is simply not drawn, so a short bar means either
 genuinely low character or basis functions you left out. There is no "remainder" bar.
 
-Combined with the print-threshold loss above, this makes absolute bar heights hard to
-interpret: a fully assigned MO already lands near 80%, so a stack at 60% could be either
-missing functions or a real result. Compare bars against each other rather than against
-100%, and sanity-check group totals in the table.
+In **exact** mode a fully assigned stack reaches 100%, so a shortfall is unassigned basis
+functions and nothing else — check the **Total** column, which reads 100.0.
+
+In **printed table** mode a fully assigned stack still lands near 88%, and the shortfall
+varies by MO, so absolute heights are not interpretable and cross-MO comparisons are skewed.
+The Total column is the tell: 100.0 means nothing is missing, ~88 means ORCA truncated.
 
 ### Table tab
 
-Same numbers as the plot, one row per MO: label, MO number, energy in eV, occupation, and
-one percentage column per group. HOMO and LUMO rows are tinted.
+Same numbers as the plot, one row per MO: label, MO number, energy in eV, occupation, one
+percentage column per group, and **Total** — the summed population over *every* basis
+function in the file, not just the grouped ones. Total is the quickest check on whether a
+short stack means low group character or missing data: 100.0 in exact mode, ~85–92 with
+ORCA's printed table. HOMO and LUMO rows are tinted.
 
 - **Show all MOs** switches from the frontier window to every MO in the file, recomputing
   group sums over the full range. Rows outside the frontier are labelled by MO number.

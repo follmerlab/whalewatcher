@@ -1,6 +1,11 @@
-# ORCA population logs. Routinely 100-200 MB; regenerable from the input.
+# ORCA job artifacts. Population logs run 40-200 MB and are regenerable from
+# the input. Note *.pop.log does NOT match *.popfull.log, hence the extra rules.
 *.pop.log
 *.pop.out
+*.popfull.log
+*.popfull.out
+*.inp
+*.gbw
 
 # Jupyter notebooks
 *.ipynb
