@@ -683,9 +683,10 @@ class OrcaVibViewer(tk.Tk):
 
         tk.Label(ctrl_f, text="Spin:").pack(side=tk.LEFT)
         self.orb_spin_var = tk.StringVar(value="up")
-        ttk.Combobox(ctrl_f, textvariable=self.orb_spin_var,
-                     values=["up", "down", "both"], state="readonly",
-                     width=5).pack(side=tk.LEFT, padx=4)
+        self._spin_combo = ttk.Combobox(
+            ctrl_f, textvariable=self.orb_spin_var,
+            values=["up", "down", "both"], state="readonly", width=11)
+        self._spin_combo.pack(side=tk.LEFT, padx=4)
 
         tk.Label(ctrl_f, text="n MOs each side:").pack(side=tk.LEFT, padx=(8, 0))
         self.n_mos_var = tk.IntVar(value=10)
@@ -828,15 +829,31 @@ class OrcaVibViewer(tk.Tk):
             if not data:
                 messagebox.showwarning(
                     "No data",
-                    "No SPIN UP/DOWN Loewdin MO population sections found.\n"
-                    "Confirm the file contains 'LOEWDIN ORBITAL POPULATIONS PER MO'."
+                    "No LOEWDIN ORBITAL POPULATIONS PER MO table found.\n\n"
+                    "Rerun ORCA with\n"
+                    "  %output Print[P_Overlap] 1  Print[P_MOs] 2 end\n"
+                    "for exact populations, or\n"
+                    "  %output Print[P_OrbPopMO_L] 1 end\n"
+                    "for ORCA's printed table."
                 )
-                self.orb_status_label.config(text="No Loewdin sections found")
+                self.orb_status_label.config(text="No Loewdin populations found")
                 self.pop_file_label.config(text="No file loaded")
                 return
 
             self.loewdin_data = data
             self._pop_method = result.get('method', 'printed')
+
+            # A closed-shell calculation has one channel; offering "down" and
+            # "both" for it would just produce "no data" errors.
+            restricted = all(df.attrs.get("restricted", False)
+                             for df in data.values() if df is not None)
+            if restricted:
+                self._spin_combo.config(values=["closed-shell"])
+                self.orb_spin_var.set("closed-shell")
+            else:
+                self._spin_combo.config(values=["up", "down", "both"])
+                if self.orb_spin_var.get() == "closed-shell":
+                    self.orb_spin_var.set("up")
             all_labels = set()
             for spin_df in self.loewdin_data.values():
                 if spin_df is not None:
@@ -850,7 +867,8 @@ class OrcaVibViewer(tk.Tk):
             self._populate_orbital_list()
 
             short = os.path.basename(path)
-            spins = [k.replace("spin_", "") for k in self.loewdin_data]
+            spins = (["closed-shell"] if restricted
+                     else [k.replace("spin_", "") for k in self.loewdin_data])
             src = ("exact (computed from S and C)" if self._pop_method == 'exact'
                    else "ORCA printed table (truncated at 0.1%)")
             self.pop_file_label.config(
@@ -864,7 +882,23 @@ class OrcaVibViewer(tk.Tk):
             else:
                 msg = (f"Loaded {len(self._avail_orbitals)} basis functions — "
                        f"printed table; columns sum to <100%, see Total column")
+            skipped = sum(df.attrs.get("skipped_rows", 0)
+                          for df in data.values() if df is not None)
+            if skipped:
+                msg += f"  ({skipped} rows skipped)"
             self.orb_status_label.config(text=msg)
+
+            # Skipped rows never happen on well-formed output. They mean the
+            # table layout is not what the parser expects, and the numbers
+            # on screen are undercounting by an unknown amount.
+            if skipped:
+                messagebox.showwarning(
+                    "Rows skipped while parsing",
+                    f"{skipped} data rows in the printed population table could "
+                    "not be read and were dropped. Group sums will be too low.\n\n"
+                    "This usually means a format difference between ORCA "
+                    "versions. Please open an issue with the ORCA version and "
+                    "a few lines of the table.")
 
             # Falling back silently would leave the user reading truncated
             # numbers while believing they were exact.
@@ -1059,7 +1093,8 @@ class OrcaVibViewer(tk.Tk):
 
         self.orb_fig.clf()
         self.orb_ax = self.orb_fig.add_subplot(111)
-        self._draw_bars(self.orb_ax, mo_labels, group_chars, f"{spin} spin")
+        self._draw_bars(self.orb_ax, mo_labels, group_chars,
+                        "closed-shell" if spin == "closed-shell" else f"{spin} spin")
         self.orb_fig.tight_layout()
         self.orb_canvas.draw()
 
@@ -1078,7 +1113,7 @@ class OrcaVibViewer(tk.Tk):
 
     def _compute_frontier(self, spin):
         """Return frontier MO data for one spin channel, or None if unavailable."""
-        spin_key = f'spin_{spin}'
+        spin_key = "spin_up" if spin == "closed-shell" else f"spin_{spin}"
         if spin_key not in self.loewdin_data or self.loewdin_data[spin_key] is None:
             return None
         df = self.loewdin_data[spin_key]

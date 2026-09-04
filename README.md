@@ -155,10 +155,21 @@ the Table tab shows the sum for every MO, so this is visible rather than assumed
 
 ### Reading either source
 
-Population data is keyed on `SPIN UP` / `SPIN DOWN` in the printed table. Exact mode instead
-detects the spin boundary as a restart of the MO column indices, so **restricted
-calculations work in exact mode** even though the printed-table parser still requires
-unrestricted output ([issue #3](https://github.com/follmerlab/whalewatcher/issues/3)).
+Both sources handle restricted and unrestricted output. Exact mode detects the spin
+boundary as a restart of the MO column indices; one coefficient matrix means closed-shell,
+two means open-shell. The printed table carries `SPIN UP` / `SPIN DOWN` lines for
+unrestricted runs and nothing at all for restricted ones, and the parser accepts either.
+A closed-shell file collapses the **Spin** selector to a single `closed-shell` entry.
+
+The printed-table parser only enters the table at its exact `LOEWDIN ORBITAL POPULATIONS
+PER MO` header. That matters because ORCA reuses the `SPIN UP` / `SPIN DOWN` markers in the
+`ORBITAL ENERGIES` block, in `MULLIKEN ORBITAL POPULATIONS PER MO`, and in
+`LOEWDIN REDUCED ORBITAL POPULATIONS PER MO`, all of which are commonly present in the same
+file. Inside the table each column block is read positionally (MO numbers, energies,
+occupations, dashed rule) and validated; a block that does not fit raises a parse error
+rather than guessing, because a mis-bound header row silently moves the HOMO. Data rows
+that cannot be read are counted and reported in the status bar as "N rows skipped", with
+a warning dialog, since on well-formed output that count is zero.
 
 One parsing hazard worth knowing if you touch that code: MO coefficients are **fixed-width
 and can run together** — `-10.084917-10.367585` is two values, not one — so those rows are
@@ -242,49 +253,39 @@ Tracked as GitHub issues. The ones most likely to bite you:
 
 | # | Problem |
 |---|---|
-| [3](https://github.com/follmerlab/whalewatcher/issues/3) | Restricted (closed-shell) population output is not recognised at all |
-| [4](https://github.com/follmerlab/whalewatcher/issues/4) | Energies and occupations can silently desync from MO numbers across column blocks |
 | [5](https://github.com/follmerlab/whalewatcher/issues/5) | `spin=both` plots both channels but tables only the up channel |
-| [6](https://github.com/follmerlab/whalewatcher/issues/6) | Basis-function rows are dropped silently when the column count does not match |
-| [7](https://github.com/follmerlab/whalewatcher/issues/7) | No test fixtures, so no ORCA version is verified |
-| [8](https://github.com/follmerlab/whalewatcher/issues/8) | Header-role detection can bind the energy row to occupations |
-| [15](https://github.com/follmerlab/whalewatcher/issues/15) | Section detection also matches the `ORBITAL ENERGIES` block, wasting a full scan of the file |
-
-Of these, only #15 is confirmed to occur on real output. #4, #6, and #8 are latent paths that
-did not trigger on the test file — see the validation comments on each.
+| [11](https://github.com/follmerlab/whalewatcher/issues/11) | The same basis function in two groups is double-counted with no warning |
+| [17](https://github.com/follmerlab/whalewatcher/issues/17) | Windows taskbar button shows the Tk feather instead of the app icon |
 
 Full list: <https://github.com/follmerlab/whalewatcher/issues>
 
 ## ORCA compatibility
 
-The frequency and geometry blocks have been stable across ORCA 4, 5, and 6, so the
-Vibrational Modes tab is expected to work broadly. It has not been run against a fixture
-here.
+Every parser is tested in CI against real **ORCA 6.1.1** output committed under
+`tests/data/`, generated from the inputs next to them:
 
-The Orbital Analysis tab has been validated end to end on one file:
-
-| | |
+| Fixture | Covers |
 |---|---|
-| Method | `! BP86 def2-TZVPP def2/J def2-TZVPP/C UKS RIJCOSX D3 CPCM` |
-| System | Cu dimer, 2062 basis functions, 2062 MOs per spin |
-| Size | 205 MB, 2.66M lines, 692 column blocks |
-| Parse time | 38.8 s |
-| Result | both spin channels recovered, all 2062 basis functions, MO numbers / energies / occupations in sync, HOMO–LUMO 2.374 eV |
+| `orca611_h2o_rks.out` | closed-shell (RKS), both population sources |
+| `orca611_oh_uks.out` | open-shell doublet (UKS), genuinely spin-polarised, both sources, plus the `ORBITAL ENERGIES` false positive |
+| `orca611_h2o_optfreq.out` | `Opt Freq`: several geometry blocks, frequencies, normal modes |
 
-What that does **not** cover:
+Beyond the fixtures, the printed-table parser has been checked on lab output that was not
+committed because of size:
 
-- **Restricted output.** The test file is UKS. Closed-shell is known broken
-  ([#3](https://github.com/follmerlab/whalewatcher/issues/3)), not merely unverified.
-- **Spin-polarised output.** The test file is multiplicity 1 and its two channels are
-  identical, so it confirms the channels parse independently but not that a genuinely
-  polarised case is handled.
-- **Other ORCA releases.** The four-header-line block layout and the two-token row labels
-  (`0Cu  6s` → `0Cu_6s`) hold for this file. Both are assumptions, not documented guarantees.
+| System | Basis fns | Type | Size | Parse time |
+|---|---|---|---|---|
+| Cu dimer, BP86/def2-TZVPP | 2062 | UKS | 205 MB | (validated by a contributor on the earlier parser) |
+| Mn nitrido porphyrin, PBE0 | 1292 | RKS | 93 MB | 0.2 s |
+| Mn nitrido porphyrin, PBE0 | 1297 | UKS | 210 MB | 0.5 s |
 
-If your file parses to zero groups or loses rows, that is the first thing to suspect.
-Attaching a trimmed sample to
-[issue #7](https://github.com/follmerlab/whalewatcher/issues/7) is the fastest way to get
-your version supported.
+The Mn files also carry Mulliken and reduced per-MO tables around the Loewdin one, which is
+the case the section gating exists for.
+
+**Other ORCA releases** remain assumptions rather than guarantees: the four-header-line
+block layout and the two-token row labels (`0Cu  6s` → `0Cu_6s`). If a file parses to a
+parse error or reports skipped rows, that is the first thing to suspect. Attaching a trimmed
+sample to a new issue, with the ORCA version, is the fastest way to get it supported.
 
 One thing not to mistake for a bug: the top virtuals of a decontracted auxiliary basis can
 carry eigenvalues in the millions of Hartree. In the test file MO 2061 sits at
@@ -294,9 +295,26 @@ energies has to tolerate it.
 ## Layout
 
 ```
-orca_vib_viewer.py    everything — parsers, Tk UI, matplotlib canvases
-LICENSE               MIT
+orca_vib_viewer.py              the app: Tk UI, matplotlib canvases; run this
+whalewatcher/
+  freq.py                       geometry, frequencies, normal modes, bond detection
+  loewdin_table.py              ORCA's printed LOEWDIN ORBITAL POPULATIONS PER MO table
+  loewdin_exact.py              exact populations from OVERLAP MATRIX and MOLECULAR ORBITALS
+tests/                          pytest suite; tests/data/ holds the ORCA 6.1.1 fixtures
+assets/                         window icon
 ```
+
+## Development
+
+```bash
+pip install pytest
+pytest -q
+```
+
+The parser tests need only numpy and pandas. The GUI smoke test drives the real widgets
+and skips itself when there is no display, so it runs locally but not in CI. To add a
+fixture, put the ORCA input under `tests/data/`, run it, commit both files, and note the
+ORCA version in the filename.
 
 Roughly: `parse_orca_output` handles geometry, frequencies, and normal modes.
 `parse_orca_loewdin_populations_streaming` and its helpers handle populations.

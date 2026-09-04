@@ -27,5 +27,5 @@ def test_printed_table_agrees_with_exact(data_dir):
     exact = parse_orca_exact_loewdin(path)["spin_up"]
     cols = [f"MO_{i}" for i in range(5)]
     e = exact.loc[printed.index, cols]
-    assert np.abs(printed[cols].fillna(0).values - e.values).max() < 0.15
+    assert np.abs(printed[cols].values - e.values).max() < 0.15
     assert np.allclose(printed.attrs["mo_energies"][:5], exact.attrs["mo_energies"][:5], atol=1e-4)
