@@ -7,9 +7,10 @@ analysis). The GUI is ``orca_vib_viewer.py`` at the repo root.
 from .freq import parse_orca_output, detect_bonds, COV_RADII, BOND_TOLERANCE
 from .loewdin_table import parse_orca_loewdin_populations_streaming, HAS_PANDAS
 from .loewdin_exact import parse_orca_exact_loewdin
+from .groups import save_groups, load_groups
 
 __all__ = [
     "parse_orca_output", "detect_bonds", "COV_RADII", "BOND_TOLERANCE",
     "parse_orca_loewdin_populations_streaming", "parse_orca_exact_loewdin",
-    "HAS_PANDAS",
+    "HAS_PANDAS", "save_groups", "load_groups",
 ]

@@ -5,7 +5,8 @@ Opens an ORCA frequency/opt+freq output file, lists all vibrational frequencies,
 and animates the selected normal mode as a looping 3D molecular motion.
 
 Usage:
-    python3 orca_vib_viewer.py [path/to/file.out]
+    python3 orca_vib_viewer.py [FREQ.out] [--pop POP.log] [--groups GROUPS.json]
+                               [--tab {modes,orbital}]
 """
 
 import sys
@@ -25,8 +26,9 @@ import numpy as np
 from whalewatcher import (
     parse_orca_output, detect_bonds,
     parse_orca_loewdin_populations_streaming, parse_orca_exact_loewdin,
-    HAS_PANDAS,
+    HAS_PANDAS, save_groups, load_groups,
 )
+from whalewatcher.cli import parse_args
 
 
 # ---------- CPK colours and display radii (Angstrom) ----------
@@ -86,7 +88,7 @@ class OrcaVibViewer(tk.Tk):
     N_FRAMES = 40     # frames per full oscillation cycle
     AMPLITUDE = 0.4   # max displacement in Angstrom (scaled to mode vector)
 
-    def __init__(self, filepath=None):
+    def __init__(self, filepath=None, pop_file=None, groups_file=None, tab="modes"):
         # Before super(), which creates the window: the taskbar reads the
         # process identity at window-creation time.
         set_windows_app_id()
@@ -123,6 +125,12 @@ class OrcaVibViewer(tk.Tk):
 
         if filepath:
             self._load_file(filepath)
+        if groups_file:
+            self._load_groups(groups_file)
+        if pop_file:
+            self._load_pop_file(pop_file)
+        if tab == "orbital":
+            self.notebook.select(1)
 
     # ------ Window icon ------
 
@@ -647,6 +655,13 @@ class OrcaVibViewer(tk.Tk):
                   command=self._rename_group,
                   font=("Helvetica", 9)).pack(fill=tk.X)
 
+        io_f = tk.Frame(col2)
+        io_f.pack(fill=tk.X, padx=4, pady=(0, 2))
+        tk.Button(io_f, text="Save groups…", command=self._save_groups,
+                  font=("Helvetica", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(io_f, text="Load groups…", command=self._load_groups,
+                  font=("Helvetica", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+
         grps_f = tk.Frame(col2)
         grps_f.pack(fill=tk.X, padx=4, pady=(0, 2))
         grps_sb = tk.Scrollbar(grps_f)
@@ -941,6 +956,57 @@ class OrcaVibViewer(tk.Tk):
     def _current_group_name(self):
         sel = self.groups_lb.curselection()
         return self.groups_lb.get(sel[0]) if sel else None
+
+    def _save_groups(self, path=None):
+        if not self.orb_groups:
+            messagebox.showinfo("No groups", "There are no groups to save.")
+            return
+        if path is None:
+            path = filedialog.asksaveasfilename(
+                title="Save group definitions", defaultextension=".json",
+                filetypes=[("Group definitions", "*.json"), ("All files", "*.*")])
+            if not path:
+                return
+        try:
+            save_groups(path, self.orb_groups, self.group_colors)
+        except OSError as e:
+            messagebox.showerror("Save failed", str(e))
+            return
+        self.orb_status_label.config(
+            text=f"Saved {len(self.orb_groups)} groups to {os.path.basename(path)}")
+
+    def _load_groups(self, path=None):
+        """Replace the current groups with the ones in a JSON file. Labels that
+        are not in the loaded population file are kept but reported."""
+        if path is None:
+            path = filedialog.askopenfilename(
+                title="Load group definitions",
+                filetypes=[("Group definitions", "*.json"), ("All files", "*.*")])
+            if not path:
+                return
+        try:
+            groups, colors = load_groups(path)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("Could not load groups", f"{path}\n\n{e}")
+            return
+
+        self.orb_groups = groups
+        self.group_colors = {}
+        for name in groups:
+            color = colors.get(name)
+            if color is None:
+                color = GROUP_COLOR_CYCLE[self._color_counter % len(GROUP_COLOR_CYCLE)]
+                self._color_counter += 1
+            self.group_colors[name] = color
+        self._refresh_groups_lb(select_name=next(iter(groups), None))
+
+        msg = f"Loaded {len(groups)} groups from {os.path.basename(path)}"
+        if self._avail_orbitals:
+            known = set(self._avail_orbitals)
+            missing = sum(1 for orbs in groups.values() for o in orbs if o not in known)
+            if missing:
+                msg += f"  |  {missing} labels not in the loaded file"
+        self.orb_status_label.config(text=msg)
 
     def _new_group(self):
         name = self.new_grp_var.get().strip()
@@ -1392,6 +1458,7 @@ class OrcaVibViewer(tk.Tk):
 # ---------- Entry point ----------
 
 if __name__ == "__main__":
-    filepath = sys.argv[1] if len(sys.argv) > 1 else None
-    app = OrcaVibViewer(filepath)
+    args = parse_args()
+    app = OrcaVibViewer(args.freq_file, pop_file=args.pop,
+                        groups_file=args.groups, tab=args.tab)
     app.mainloop()

@@ -37,14 +37,19 @@ works and the orbital tab shows an install prompt instead of crashing.
 python orca_vib_viewer.py
 ```
 
-Or hand it a frequency file directly:
+Or hand it files directly:
 
 ```bash
-python orca_vib_viewer.py mycomplex.out
+python orca_vib_viewer.py mycomplex.out                       # Vibrational Modes tab
+python orca_vib_viewer.py --pop mycomplex.pop.log             # Orbital Analysis tab
+python orca_vib_viewer.py --pop mycomplex.pop.log --groups fragments.json
+python orca_vib_viewer.py freq.out --pop pop.log --tab orbital
 ```
 
-The positional argument loads into the **Vibrational Modes** tab only. Population logs are
-opened from inside the Orbital Analysis tab.
+The positional argument is the frequency file. `--pop` loads a population log at startup,
+`--groups` preloads group definitions saved from the Orbital Analysis tab, and `--tab` picks
+the tab to show first; without it the orbital tab opens when only `--pop` or `--groups` is
+given. `--help` lists everything.
 
 ---
 
@@ -197,6 +202,11 @@ Energies are stored in Hartree and converted to eV for display at 27.2114 eV/Ha.
    counted twice and the stack would overshoot. Overlap is allowed if you say yes. The status
    bar keeps a running count: "12/24 basis functions assigned, 2 in more than one group".
 5. Set **Spin** and **n MOs each side**, then **Update Plot**.
+6. **Save groups…** writes the definitions, colours included, to a JSON file. **Load
+   groups…** replaces the current set from one. Labels are the `0Cu_3dxy` strings, so a file
+   made for one calculation applies to any other with the same atom order and basis;
+   labels the loaded population file does not have are kept and counted in the status bar.
+   `--groups fragments.json` does the same at startup.
 
 ### Controls
 
@@ -238,8 +248,9 @@ The Total column is the tell: 100.0 means nothing is missing, ~88 means ORCA tru
 
 Same numbers as the plot, one row per MO: label, MO number, energy in eV, occupation, one
 percentage column per group, and **Total**. In `both` mode a leading **Spin** column says
-which channel each row belongs to, and the CSV copy carries it too. **Total** is — the summed population over *every* basis
-function in the file, not just the grouped ones. It is the quickest check on whether a
+which channel each row belongs to, and the CSV copy carries it too. **Total** is the summed
+population over *every* basis function in the file, not just the grouped ones. It is the
+quickest check on whether a
 short stack means low group character or missing data: 100.0 in exact mode, ~85–92 with
 ORCA's printed table. HOMO and LUMO rows are tinted.
 
@@ -306,6 +317,8 @@ whalewatcher/
   freq.py                       geometry, frequencies, normal modes, bond detection
   loewdin_table.py              ORCA's printed LOEWDIN ORBITAL POPULATIONS PER MO table
   loewdin_exact.py              exact populations from OVERLAP MATRIX and MOLECULAR ORBITALS
+  groups.py                     group definitions as JSON
+  cli.py                        command-line arguments
 tests/                          pytest suite; tests/data/ holds the ORCA 6.1.1 fixtures
 assets/                         window icon
 ```

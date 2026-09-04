@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 
 pytest.importorskip("pandas")
+pytest.importorskip("matplotlib")
 tk = pytest.importorskip("tkinter")
 
 
@@ -129,3 +130,47 @@ def test_cross_group_duplicate_prompts(app, data_dir):
         app._add_to_group()
     assert len(app.orb_groups["B"]) == 3
     assert "3 in more than one group" in app.orb_status_label.cget("text")
+
+
+def test_groups_save_load_and_startup_args(app, data_dir, tmp_path):
+    import orca_vib_viewer as ovv
+    from whalewatcher import load_groups
+    with mock.patch.object(ovv.messagebox, "showwarning"), \
+            mock.patch.object(ovv.messagebox, "showinfo"):
+        _load_and_wait(app, data_dir / "orca611_h2o_rks.out", "exact (S,C)")
+    app.orb_groups = {"O": [l for l in app._avail_orbitals if l.startswith("0O")],
+                      "H": [l for l in app._avail_orbitals if "H_" in l] + ["9Zz_1s"]}
+    app.group_colors = {"O": "#e41a1c", "H": "#377eb8"}
+    p = tmp_path / "groups.json"
+    app._save_groups(str(p))
+    assert load_groups(p)[0] == app.orb_groups
+
+    app.orb_groups, app.group_colors = {}, {}
+    app._refresh_groups_lb()
+    app._load_groups(str(p))
+    assert list(app.orb_groups) == ["O", "H"]
+    assert app.group_colors == {"O": "#e41a1c", "H": "#377eb8"}
+    assert app.groups_lb.get(0, "end") == ("O", "H")
+    assert "1 labels not in the loaded file" in app.orb_status_label.cget("text")
+
+    with mock.patch.object(ovv.messagebox, "showerror") as err:
+        app._load_groups(str(data_dir / "orca611_h2o_rks.inp"))
+    assert err.called and list(app.orb_groups) == ["O", "H"]   # untouched on failure
+
+    # Startup path: groups + pop file + orbital tab, no freq file.
+    with mock.patch.object(ovv.messagebox, "showwarning"), \
+            mock.patch.object(ovv.messagebox, "showinfo"):
+        app2 = ovv.OrcaVibViewer(pop_file=str(data_dir / "orca611_h2o_rks.out"),
+                                 groups_file=str(p), tab="orbital")
+        app2.withdraw()
+        try:
+            t0 = time.time()
+            while app2.loewdin_data is None and time.time() - t0 < 30:
+                app2.update(); time.sleep(0.02)
+            assert app2.loewdin_data is not None
+            assert list(app2.orb_groups) == ["O", "H"]
+            assert app2.notebook.index(app2.notebook.select()) == 1
+            app2._update_orbital_plot(); app2.update()
+            assert "eV" in app2.gap_label.cget("text")
+        finally:
+            app2.destroy()
