@@ -192,16 +192,21 @@ Energies are stored in Hartree and converted to eV for display at 27.2114 eV/Ha.
    a fixed 12-colour cycle; colours are assigned monotonically and are not reused after a
    delete. Double-click a group to rename it, **✕** to delete it.
 4. Select a group, select orbitals in column 1, then **→ Add to Group** (or double-click a
-   single orbital). Duplicates within a group are dropped silently. Nothing stops you from
-   putting the same basis function in two different groups — if you do, its population is
-   counted twice and the stack overshoots.
+   single orbital). Duplicates within a group are dropped silently. Adding a basis function
+   that already belongs to another group prompts first, because its population would then be
+   counted twice and the stack would overshoot. Overlap is allowed if you say yes. The status
+   bar keeps a running count: "12/24 basis functions assigned, 2 in more than one group".
 5. Set **Spin** and **n MOs each side**, then **Update Plot**.
 
 ### Controls
 
-**Spin** — `up`, `down`, or `both`. `both` draws side-by-side panels on a shared y-axis and
-reports both gaps. Note that in `both` mode the Table tab shows the up channel only
-([issue #5](https://github.com/follmerlab/whalewatcher/issues/5)).
+**Spin** — `up`, `down`, or `both`. `both` draws side-by-side panels on a shared y-axis,
+reports both gaps, and gives the Table tab a **Spin** column with the two channels stacked
+one after the other. For a closed-shell file the selector shows only `closed-shell`.
+
+**Show unassigned** — adds a grey segment on top of each stack for the population not in any
+group, computed as the column total minus the grouped stacks. Off by default. Also appears
+as an Unassigned column in the table while it is on.
 
 **n MOs each side** — how deep to reach on either side of the gap. It counts *inclusive* of
 the frontier pair: `n = 10` gives HOMO−9 through HOMO and LUMO through LUMO+9, so 20 bars.
@@ -217,8 +222,10 @@ table if a result looks off.
 Stacked bars, one per frontier MO, x-axis running HOMO−n → LUMO+n. Bar height is summed
 Loewdin percentage for that group. The red dashed line sits in the HOMO/LUMO gap.
 
-Anything you did not assign to a group is simply not drawn, so a short bar means either
-genuinely low character or basis functions you left out. There is no "remainder" bar.
+Anything you did not assign to a group is not drawn unless **Show unassigned** is on, so a
+short bar means either genuinely low character or basis functions you left out. With the
+toggle on, a thick grey cap says you are missing functions; with the printed table a thin
+one is ORCA's print threshold.
 
 In **exact** mode a fully assigned stack reaches 100%, so a shortfall is unassigned basis
 functions and nothing else — check the **Total** column, which reads 100.0.
@@ -230,8 +237,9 @@ The Total column is the tell: 100.0 means nothing is missing, ~88 means ORCA tru
 ### Table tab
 
 Same numbers as the plot, one row per MO: label, MO number, energy in eV, occupation, one
-percentage column per group, and **Total** — the summed population over *every* basis
-function in the file, not just the grouped ones. Total is the quickest check on whether a
+percentage column per group, and **Total**. In `both` mode a leading **Spin** column says
+which channel each row belongs to, and the CSV copy carries it too. **Total** is — the summed population over *every* basis
+function in the file, not just the grouped ones. It is the quickest check on whether a
 short stack means low group character or missing data: 100.0 in exact mode, ~85–92 with
 ORCA's printed table. HOMO and LUMO rows are tinted.
 
@@ -253,8 +261,6 @@ Tracked as GitHub issues. The ones most likely to bite you:
 
 | # | Problem |
 |---|---|
-| [5](https://github.com/follmerlab/whalewatcher/issues/5) | `spin=both` plots both channels but tables only the up channel |
-| [11](https://github.com/follmerlab/whalewatcher/issues/11) | The same basis function in two groups is double-counted with no warning |
 | [17](https://github.com/follmerlab/whalewatcher/issues/17) | Windows taskbar button shows the Tk feather instead of the app icon |
 
 Full list: <https://github.com/follmerlab/whalewatcher/issues>

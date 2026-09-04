@@ -116,6 +116,7 @@ class OrcaVibViewer(tk.Tk):
         self.group_colors = {}  # name -> hex color string
         self._color_counter = 0  # monotonic; survives group deletions
         self.all_mos_var = tk.BooleanVar(value=False)
+        self.show_unassigned_var = tk.BooleanVar(value=False)
         self._last_rebuild_args = None  # cached for checkbox-driven refresh
 
         self._build_ui()
@@ -693,6 +694,12 @@ class OrcaVibViewer(tk.Tk):
         tk.Spinbox(ctrl_f, from_=1, to=100, textvariable=self.n_mos_var,
                    width=4).pack(side=tk.LEFT, padx=4)
 
+        # Off by default: in exact mode a short stack already means
+        # "unassigned", but with the printed table it is the only way to tell
+        # missing basis functions from ORCA's print threshold.
+        ttk.Checkbutton(ctrl_f, text="Show unassigned",
+                        variable=self.show_unassigned_var).pack(side=tk.LEFT, padx=(8, 0))
+
         tk.Button(ctrl_f, text="Update Plot", command=self._update_orbital_plot,
                   font=("Helvetica", 10, "bold")).pack(side=tk.LEFT, padx=8)
 
@@ -1009,16 +1016,51 @@ class OrcaVibViewer(tk.Tk):
         selections = self.avail_lb.curselection()
         if not selections:
             return
+        labels = [self.avail_lb.get(idx) for idx in selections]
+
+        # Groups are nearly always meant to partition the basis. A function
+        # in two groups is summed into both and the stack overshoots, so ask
+        # before doing it. Overlap stays legal; it just has to be deliberate.
+        owners = {}
+        for gname, gorbs in self.orb_groups.items():
+            if gname == name:
+                continue
+            for label in labels:
+                if label in gorbs:
+                    owners.setdefault(label, []).append(gname)
+        if owners:
+            groups = sorted({g for gs in owners.values() for g in gs})
+            ok = messagebox.askyesno(
+                "Already assigned",
+                f"{len(owners)} of the selected basis functions are already in "
+                f"{', '.join(repr(g) for g in groups)}.\n\n"
+                "A basis function in two groups is counted twice, so the "
+                "stacked bars will overshoot. Add anyway?")
+            if not ok:
+                return
+
         existing = set(self.orb_groups[name])
         added = 0
-        for idx in selections:
-            label = self.avail_lb.get(idx)
+        for label in labels:
             if label not in existing:
                 self.orb_groups[name].append(label)
                 existing.add(label)
                 added += 1
         self._on_group_lb_select()
-        self.orb_status_label.config(text=f"Added {added} orbital(s) to '{name}'")
+        self.orb_status_label.config(
+            text=f"Added {added} orbital(s) to '{name}'  |  {self._assignment_summary()}")
+
+    def _assignment_summary(self):
+        """'12/24 basis functions assigned, 2 in more than one group'."""
+        counts = {}
+        for orbs in self.orb_groups.values():
+            for label in orbs:
+                counts[label] = counts.get(label, 0) + 1
+        dup = sum(1 for c in counts.values() if c > 1)
+        text = f"{len(counts)}/{len(self._avail_orbitals)} basis functions assigned"
+        if dup:
+            text += f", {dup} in more than one group"
+        return text
 
     def _remove_from_group(self):
         name = self._current_group_name()
@@ -1027,6 +1069,9 @@ class OrcaVibViewer(tk.Tk):
         to_remove = {self.ingrp_lb.get(i) for i in self.ingrp_lb.curselection()}
         self.orb_groups[name] = [o for o in self.orb_groups[name] if o not in to_remove]
         self._on_group_lb_select()
+        self.orb_status_label.config(
+            text=f"Removed {len(to_remove)} orbital(s) from '{name}'  |  "
+                 f"{self._assignment_summary()}")
 
     # ------ Orbital Analysis: plotting ------
 
@@ -1058,7 +1103,7 @@ class OrcaVibViewer(tk.Tk):
                 axes = [axes]
 
             gap_parts = []
-            table_data = None
+            channels = []
             for ax, (s, r) in zip(axes, results.items()):
                 mo_labels, mo_numbers, mo_energies, mo_occupations, \
                     homo_idx, lumo_idx, group_chars, frontier, df = r
@@ -1068,18 +1113,16 @@ class OrcaVibViewer(tk.Tk):
                 lumo_ev = mo_energies[lumo_idx] * ha_to_ev
                 gap_ev  = lumo_ev - homo_ev
                 gap_parts.append(f"{s}: {gap_ev:.3f} eV (HOMO {homo_ev:.3f}, LUMO {lumo_ev:.3f})")
-                if table_data is None:
-                    table_data = (mo_labels, mo_numbers, mo_energies,
-                                  mo_occupations, homo_idx, lumo_idx, group_chars, df)
+                channels.append((s, mo_labels, mo_numbers, mo_energies,
+                                 mo_occupations, homo_idx, lumo_idx, group_chars, df))
 
             self.gap_label.config(text="   |   ".join(gap_parts))
             self.orb_fig.tight_layout()
             self.orb_canvas.draw()
 
-            if table_data:
-                self._rebuild_table(*table_data)
+            self._rebuild_table(channels)
             self.orb_status_label.config(
-                text=f"Showing both spins  |  {len(self.orb_groups)} groups"
+                text=f"Showing both spins  |  {self._assignment_summary()}"
             )
             return
 
@@ -1106,10 +1149,10 @@ class OrcaVibViewer(tk.Tk):
             text=f"{gap_ev:.3f} eV   (HOMO {homo_ev:.3f} eV,  LUMO {lumo_ev:.3f} eV)"
         )
         self.orb_status_label.config(
-            text=f"{len(frontier)} frontier MOs  |  {len(group_chars)} groups"
+            text=f"{len(frontier)} frontier MOs  |  {self._assignment_summary()}"
         )
-        self._rebuild_table(mo_labels, mo_numbers, mo_energies, mo_occupations,
-                            homo_idx, lumo_idx, group_chars, df)
+        self._rebuild_table([(spin, mo_labels, mo_numbers, mo_energies, mo_occupations,
+                              homo_idx, lumo_idx, group_chars, df)])
 
     def _compute_frontier(self, spin):
         """Return frontier MO data for one spin channel, or None if unavailable."""
@@ -1158,8 +1201,20 @@ class OrcaVibViewer(tk.Tk):
                 if present else np.zeros(len(frontier))
             )
 
+        if self.show_unassigned_var.get():
+            group_chars["Unassigned"] = self._unassigned(df, frontier_cols, group_chars)
+
         return mo_labels, mo_numbers, mo_energies, mo_occupations, \
                homo_idx, lumo_idx, group_chars, frontier, df
+
+    @staticmethod
+    def _unassigned(df, cols, group_chars):
+        """Column total minus the grouped stacks. Clipped at zero: it goes
+        negative only when a basis function sits in two groups, and that is
+        reported separately rather than drawn as a negative bar."""
+        total = df[cols].sum(axis=0).values
+        assigned = sum(group_chars.values()) if group_chars else np.zeros(len(cols))
+        return np.clip(total - assigned, 0.0, None)
 
     def _draw_bars(self, ax, mo_labels, group_chars, title):
         """Draw a stacked bar chart onto ax."""
@@ -1184,62 +1239,83 @@ class OrcaVibViewer(tk.Tk):
 
     # ------ Orbital Analysis: table view ------
 
-    def _rebuild_table(self, mo_labels, mo_numbers, mo_energies, mo_occupations,
-                       homo_idx, lumo_idx, group_chars, df=None):
-        """Rebuild the Treeview table. Respects self.all_mos_var for full-range mode."""
+    def _rebuild_table(self, channels):
+        """Rebuild the Treeview table.
+
+        ``channels`` is a list of (spin, mo_labels, mo_numbers, mo_energies,
+        mo_occupations, homo_idx, lumo_idx, group_chars, df), one per spin
+        channel being shown. With more than one the table gains a Spin column
+        and the channels are concatenated, so a CSV copy carries both.
+        Respects self.all_mos_var for full-range mode.
+        """
         # Cache args so the checkbox can trigger a refresh without a full re-plot
-        self._last_rebuild_args = (mo_labels, mo_numbers, mo_energies, mo_occupations,
-                                   homo_idx, lumo_idx, group_chars, df)
+        self._last_rebuild_args = channels
 
         ha_to_ev = 27.2114
+        multi = len(channels) > 1
+        group_names = None
+        out_rows = []     # (spin, orb_label, mo_number, e_ev, occ, group_vals, total)
 
-        # Decide which MO indices to show
-        if self.all_mos_var.get() and df is not None:
-            indices = list(range(len(mo_numbers)))
-            # Build labels: HOMO/LUMO for those two, MO number for everything else
-            display_labels = []
-            for i in indices:
-                if i == homo_idx:
-                    display_labels.append("HOMO")
-                elif i == lumo_idx:
-                    display_labels.append("LUMO")
-                else:
-                    display_labels.append(f"MO {mo_numbers[i]}")
-            # Recompute group_chars for the full MO range
-            all_mo_cols = [f"MO_{mo_numbers[i]}" for i in indices]
-            row_group_chars = {}
-            for gname, gorbs in self.orb_groups.items():
-                present = [o for o in gorbs if o in df.index]
-                row_group_chars[gname] = (
-                    df.loc[present, all_mo_cols].sum(axis=0).values
-                    if present else np.zeros(len(indices))
-                )
-        else:
-            # Frontier slice — reconstruct from homo/lumo so indices align with group_chars
-            n_mos  = self.n_mos_var.get()
-            start  = max(0, homo_idx - n_mos + 1)
-            end    = min(len(mo_numbers), lumo_idx + n_mos)
-            indices = list(range(start, end))
-            display_labels = mo_labels
-            row_group_chars = group_chars
+        for (spin, mo_labels, mo_numbers, mo_energies, mo_occupations,
+             homo_idx, lumo_idx, group_chars, df) in channels:
+            # Decide which MO indices to show
+            if self.all_mos_var.get() and df is not None:
+                indices = list(range(len(mo_numbers)))
+                # Build labels: HOMO/LUMO for those two, MO number for everything else
+                display_labels = []
+                for i in indices:
+                    if i == homo_idx:
+                        display_labels.append("HOMO")
+                    elif i == lumo_idx:
+                        display_labels.append("LUMO")
+                    else:
+                        display_labels.append(f"MO {mo_numbers[i]}")
+                # Recompute group_chars for the full MO range
+                all_mo_cols = [f"MO_{mo_numbers[i]}" for i in indices]
+                row_group_chars = {}
+                for gname, gorbs in self.orb_groups.items():
+                    present = [o for o in gorbs if o in df.index]
+                    row_group_chars[gname] = (
+                        df.loc[present, all_mo_cols].sum(axis=0).values
+                        if present else np.zeros(len(indices))
+                    )
+                if "Unassigned" in group_chars:
+                    row_group_chars["Unassigned"] = self._unassigned(
+                        df, all_mo_cols, row_group_chars)
+            else:
+                # Frontier slice — reconstruct from homo/lumo so indices align with group_chars
+                n_mos  = self.n_mos_var.get()
+                start  = max(0, homo_idx - n_mos + 1)
+                end    = min(len(mo_numbers), lumo_idx + n_mos)
+                indices = list(range(start, end))
+                display_labels = mo_labels
+                row_group_chars = group_chars
 
-        group_names = list(row_group_chars.keys())
+            if group_names is None:
+                group_names = list(row_group_chars.keys())
 
-        # Total population reported for each MO, over every basis function in the
-        # file rather than only the grouped ones. In exact mode this reads 100.0;
-        # with ORCA's printed table it reads 85-92, which is the fastest way to
-        # see that the shortfall is missing data and not low group character.
-        if df is not None:
-            tot_cols = [f"MO_{mo_numbers[i]}" for i in indices]
-            totals = df[tot_cols].sum(axis=0).values
-        else:
-            totals = np.full(len(indices), np.nan)
+            # Total population reported for each MO, over every basis function in the
+            # file rather than only the grouped ones. In exact mode this reads 100.0;
+            # with ORCA's printed table it reads 85-92, which is the fastest way to
+            # see that the shortfall is missing data and not low group character.
+            if df is not None:
+                tot_cols = [f"MO_{mo_numbers[i]}" for i in indices]
+                totals = df[tot_cols].sum(axis=0).values
+            else:
+                totals = np.full(len(indices), np.nan)
+
+            for j, (i, orb_label) in enumerate(zip(indices, display_labels)):
+                group_vals = [row_group_chars[g][j] for g in group_names]
+                tot = totals[j] if j < len(totals) else float('nan')
+                out_rows.append((spin, orb_label, mo_numbers[i],
+                                 mo_energies[i] * ha_to_ev, mo_occupations[i],
+                                 group_vals, tot))
 
         # Tear down old tree + scrollbars
         for w in self._table_frame.winfo_children():
             w.destroy()
 
-        fixed_cols = ("Orbital", "MO#", "Energy (eV)", "Occ")
+        fixed_cols = (("Spin",) if multi else ()) + ("Orbital", "MO#", "Energy (eV)", "Occ")
         col_ids = fixed_cols + tuple(group_names) + ("Total",)
 
         vsb = ttk.Scrollbar(self._table_frame, orient=tk.VERTICAL)
@@ -1258,6 +1334,9 @@ class OrcaVibViewer(tk.Tk):
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Column headings and widths
+        if multi:
+            tree.heading("Spin", text="Spin")
+            tree.column("Spin", width=50, anchor=tk.CENTER)
         tree.heading("Orbital",      text="Orbital")
         tree.heading("MO#",          text="MO #")
         tree.heading("Energy (eV)",  text="Energy (eV)")
@@ -1278,15 +1357,11 @@ class OrcaVibViewer(tk.Tk):
         tree.tag_configure("lumo", background="#e0e8ff")
 
         self._table_rows = [col_ids]
-        for j, (i, orb_label) in enumerate(zip(indices, display_labels)):
-            e_ev = mo_energies[i] * ha_to_ev
-            occ  = mo_occupations[i]
-            group_vals = [f"{row_group_chars[g][j]:.1f}" for g in group_names]
-            tot = totals[j] if j < len(totals) else float('nan')
+        for j, (spin, orb_label, mo_num, e_ev, occ, group_vals, tot) in enumerate(out_rows):
             tot_str = "—" if tot != tot else f"{tot:.1f}"
-
-            row = ((orb_label, str(mo_numbers[i]), f"{e_ev:.4f}", f"{occ:.2f}")
-                   + tuple(group_vals) + (tot_str,))
+            row = (((spin,) if multi else ())
+                   + (orb_label, str(mo_num), f"{e_ev:.4f}", f"{occ:.2f}")
+                   + tuple(f"{v:.1f}" for v in group_vals) + (tot_str,))
             self._table_rows.append(row)
 
             if orb_label == "HOMO":
@@ -1302,7 +1377,7 @@ class OrcaVibViewer(tk.Tk):
     def _rebuild_table_refresh(self):
         """Re-render the table using the last cached args (called when checkbox toggles)."""
         if self._last_rebuild_args is not None:
-            self._rebuild_table(*self._last_rebuild_args)
+            self._rebuild_table(self._last_rebuild_args)
 
     def _copy_table_csv(self):
         if not hasattr(self, '_table_rows') or not self._table_rows:
