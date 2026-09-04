@@ -28,3 +28,6 @@ __pycache__/
 .env
 venv/
 .venv/
+
+# Test fixtures are committed on purpose, including their inputs.
+!tests/data/*.inp
