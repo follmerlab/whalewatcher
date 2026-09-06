@@ -7,8 +7,11 @@
 *.inp
 *.gbw
 
-# Jupyter notebooks
-*.ipynb
+# Jupyter scratch work only. Example and tutorial notebooks are welcome in the
+# repo; scratch*.ipynb and anything under a scratch/ directory are not.
+scratch*.ipynb
+**/scratch/*.ipynb
+.ipynb_checkpoints/
 
 # Icon-generation artifacts. The shipped rasters in assets/ are fixed assets;
 # the generator and its intermediates deliberately do not live in the repo.
@@ -18,9 +21,13 @@ assets/whalewatcher_contactsheet.png
 assets/whalewatcher_*_1024.png
 
 # Python
+.pytest_cache/
 __pycache__/
 *.py[cod]
 *.pyo
 .env
 venv/
 .venv/
+
+# Test fixtures are committed on purpose, including their inputs.
+!tests/data/*.inp

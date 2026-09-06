@@ -37,14 +37,19 @@ works and the orbital tab shows an install prompt instead of crashing.
 python orca_vib_viewer.py
 ```
 
-Or hand it a frequency file directly:
+Or hand it files directly:
 
 ```bash
-python orca_vib_viewer.py mycomplex.out
+python orca_vib_viewer.py mycomplex.out                       # Vibrational Modes tab
+python orca_vib_viewer.py --pop mycomplex.pop.log             # Orbital Analysis tab
+python orca_vib_viewer.py --pop mycomplex.pop.log --groups fragments.json
+python orca_vib_viewer.py freq.out --pop pop.log --tab orbital
 ```
 
-The positional argument loads into the **Vibrational Modes** tab only. Population logs are
-opened from inside the Orbital Analysis tab.
+The positional argument is the frequency file. `--pop` loads a population log at startup,
+`--groups` preloads group definitions saved from the Orbital Analysis tab, and `--tab` picks
+the tab to show first; without it the orbital tab opens when only `--pop` or `--groups` is
+given. `--help` lists everything.
 
 ---
 
@@ -155,10 +160,21 @@ the Table tab shows the sum for every MO, so this is visible rather than assumed
 
 ### Reading either source
 
-Population data is keyed on `SPIN UP` / `SPIN DOWN` in the printed table. Exact mode instead
-detects the spin boundary as a restart of the MO column indices, so **restricted
-calculations work in exact mode** even though the printed-table parser still requires
-unrestricted output ([issue #3](https://github.com/follmerlab/whalewatcher/issues/3)).
+Both sources handle restricted and unrestricted output. Exact mode detects the spin
+boundary as a restart of the MO column indices; one coefficient matrix means closed-shell,
+two means open-shell. The printed table carries `SPIN UP` / `SPIN DOWN` lines for
+unrestricted runs and nothing at all for restricted ones, and the parser accepts either.
+A closed-shell file collapses the **Spin** selector to a single `closed-shell` entry.
+
+The printed-table parser only enters the table at its exact `LOEWDIN ORBITAL POPULATIONS
+PER MO` header. That matters because ORCA reuses the `SPIN UP` / `SPIN DOWN` markers in the
+`ORBITAL ENERGIES` block, in `MULLIKEN ORBITAL POPULATIONS PER MO`, and in
+`LOEWDIN REDUCED ORBITAL POPULATIONS PER MO`, all of which are commonly present in the same
+file. Inside the table each column block is read positionally (MO numbers, energies,
+occupations, dashed rule) and validated; a block that does not fit raises a parse error
+rather than guessing, because a mis-bound header row silently moves the HOMO. Data rows
+that cannot be read are counted and reported in the status bar as "N rows skipped", with
+a warning dialog, since on well-formed output that count is zero.
 
 One parsing hazard worth knowing if you touch that code: MO coefficients are **fixed-width
 and can run together** — `-10.084917-10.367585` is two values, not one — so those rows are
@@ -181,16 +197,26 @@ Energies are stored in Hartree and converted to eV for display at 27.2114 eV/Ha.
    a fixed 12-colour cycle; colours are assigned monotonically and are not reused after a
    delete. Double-click a group to rename it, **✕** to delete it.
 4. Select a group, select orbitals in column 1, then **→ Add to Group** (or double-click a
-   single orbital). Duplicates within a group are dropped silently. Nothing stops you from
-   putting the same basis function in two different groups — if you do, its population is
-   counted twice and the stack overshoots.
+   single orbital). Duplicates within a group are dropped silently. Adding a basis function
+   that already belongs to another group prompts first, because its population would then be
+   counted twice and the stack would overshoot. Overlap is allowed if you say yes. The status
+   bar keeps a running count: "12/24 basis functions assigned, 2 in more than one group".
 5. Set **Spin** and **n MOs each side**, then **Update Plot**.
+6. **Save groups…** writes the definitions, colours included, to a JSON file. **Load
+   groups…** replaces the current set from one. Labels are the `0Cu_3dxy` strings, so a file
+   made for one calculation applies to any other with the same atom order and basis;
+   labels the loaded population file does not have are kept and counted in the status bar.
+   `--groups fragments.json` does the same at startup.
 
 ### Controls
 
-**Spin** — `up`, `down`, or `both`. `both` draws side-by-side panels on a shared y-axis and
-reports both gaps. Note that in `both` mode the Table tab shows the up channel only
-([issue #5](https://github.com/follmerlab/whalewatcher/issues/5)).
+**Spin** — `up`, `down`, or `both`. `both` draws side-by-side panels on a shared y-axis,
+reports both gaps, and gives the Table tab a **Spin** column with the two channels stacked
+one after the other. For a closed-shell file the selector shows only `closed-shell`.
+
+**Show unassigned** — adds a grey segment on top of each stack for the population not in any
+group, computed as the column total minus the grouped stacks. Off by default. Also appears
+as an Unassigned column in the table while it is on.
 
 **n MOs each side** — how deep to reach on either side of the gap. It counts *inclusive* of
 the frontier pair: `n = 10` gives HOMO−9 through HOMO and LUMO through LUMO+9, so 20 bars.
@@ -206,8 +232,10 @@ table if a result looks off.
 Stacked bars, one per frontier MO, x-axis running HOMO−n → LUMO+n. Bar height is summed
 Loewdin percentage for that group. The red dashed line sits in the HOMO/LUMO gap.
 
-Anything you did not assign to a group is simply not drawn, so a short bar means either
-genuinely low character or basis functions you left out. There is no "remainder" bar.
+Anything you did not assign to a group is not drawn unless **Show unassigned** is on, so a
+short bar means either genuinely low character or basis functions you left out. With the
+toggle on, a thick grey cap says you are missing functions; with the printed table a thin
+one is ORCA's print threshold.
 
 In **exact** mode a fully assigned stack reaches 100%, so a shortfall is unassigned basis
 functions and nothing else — check the **Total** column, which reads 100.0.
@@ -219,8 +247,10 @@ The Total column is the tell: 100.0 means nothing is missing, ~88 means ORCA tru
 ### Table tab
 
 Same numbers as the plot, one row per MO: label, MO number, energy in eV, occupation, one
-percentage column per group, and **Total** — the summed population over *every* basis
-function in the file, not just the grouped ones. Total is the quickest check on whether a
+percentage column per group, and **Total**. In `both` mode a leading **Spin** column says
+which channel each row belongs to, and the CSV copy carries it too. **Total** is the summed
+population over *every* basis function in the file, not just the grouped ones. It is the
+quickest check on whether a
 short stack means low group character or missing data: 100.0 in exact mode, ~85–92 with
 ORCA's printed table. HOMO and LUMO rows are tinted.
 
@@ -242,49 +272,37 @@ Tracked as GitHub issues. The ones most likely to bite you:
 
 | # | Problem |
 |---|---|
-| [3](https://github.com/follmerlab/whalewatcher/issues/3) | Restricted (closed-shell) population output is not recognised at all |
-| [4](https://github.com/follmerlab/whalewatcher/issues/4) | Energies and occupations can silently desync from MO numbers across column blocks |
-| [5](https://github.com/follmerlab/whalewatcher/issues/5) | `spin=both` plots both channels but tables only the up channel |
-| [6](https://github.com/follmerlab/whalewatcher/issues/6) | Basis-function rows are dropped silently when the column count does not match |
-| [7](https://github.com/follmerlab/whalewatcher/issues/7) | No test fixtures, so no ORCA version is verified |
-| [8](https://github.com/follmerlab/whalewatcher/issues/8) | Header-role detection can bind the energy row to occupations |
-| [15](https://github.com/follmerlab/whalewatcher/issues/15) | Section detection also matches the `ORBITAL ENERGIES` block, wasting a full scan of the file |
-
-Of these, only #15 is confirmed to occur on real output. #4, #6, and #8 are latent paths that
-did not trigger on the test file — see the validation comments on each.
+| [17](https://github.com/follmerlab/whalewatcher/issues/17) | Windows taskbar button shows the Tk feather instead of the app icon |
 
 Full list: <https://github.com/follmerlab/whalewatcher/issues>
 
 ## ORCA compatibility
 
-The frequency and geometry blocks have been stable across ORCA 4, 5, and 6, so the
-Vibrational Modes tab is expected to work broadly. It has not been run against a fixture
-here.
+Every parser is tested in CI against real **ORCA 6.1.1** output committed under
+`tests/data/`, generated from the inputs next to them:
 
-The Orbital Analysis tab has been validated end to end on one file:
-
-| | |
+| Fixture | Covers |
 |---|---|
-| Method | `! BP86 def2-TZVPP def2/J def2-TZVPP/C UKS RIJCOSX D3 CPCM` |
-| System | Cu dimer, 2062 basis functions, 2062 MOs per spin |
-| Size | 205 MB, 2.66M lines, 692 column blocks |
-| Parse time | 38.8 s |
-| Result | both spin channels recovered, all 2062 basis functions, MO numbers / energies / occupations in sync, HOMO–LUMO 2.374 eV |
+| `orca611_h2o_rks.out` | closed-shell (RKS), both population sources |
+| `orca611_oh_uks.out` | open-shell doublet (UKS), genuinely spin-polarised, both sources, plus the `ORBITAL ENERGIES` false positive |
+| `orca611_h2o_optfreq.out` | `Opt Freq`: several geometry blocks, frequencies, normal modes |
 
-What that does **not** cover:
+Beyond the fixtures, the printed-table parser has been checked on lab output that was not
+committed because of size:
 
-- **Restricted output.** The test file is UKS. Closed-shell is known broken
-  ([#3](https://github.com/follmerlab/whalewatcher/issues/3)), not merely unverified.
-- **Spin-polarised output.** The test file is multiplicity 1 and its two channels are
-  identical, so it confirms the channels parse independently but not that a genuinely
-  polarised case is handled.
-- **Other ORCA releases.** The four-header-line block layout and the two-token row labels
-  (`0Cu  6s` → `0Cu_6s`) hold for this file. Both are assumptions, not documented guarantees.
+| System | Basis fns | Type | Size | Parse time |
+|---|---|---|---|---|
+| Cu dimer, BP86/def2-TZVPP | 2062 | UKS | 205 MB | (validated by a contributor on the earlier parser) |
+| Mn nitrido porphyrin, PBE0 | 1292 | RKS | 93 MB | 0.2 s |
+| Mn nitrido porphyrin, PBE0 | 1297 | UKS | 210 MB | 0.5 s |
 
-If your file parses to zero groups or loses rows, that is the first thing to suspect.
-Attaching a trimmed sample to
-[issue #7](https://github.com/follmerlab/whalewatcher/issues/7) is the fastest way to get
-your version supported.
+The Mn files also carry Mulliken and reduced per-MO tables around the Loewdin one, which is
+the case the section gating exists for.
+
+**Other ORCA releases** remain assumptions rather than guarantees: the four-header-line
+block layout and the two-token row labels (`0Cu  6s` → `0Cu_6s`). If a file parses to a
+parse error or reports skipped rows, that is the first thing to suspect. Attaching a trimmed
+sample to a new issue, with the ORCA version, is the fastest way to get it supported.
 
 One thing not to mistake for a bug: the top virtuals of a decontracted auxiliary basis can
 carry eigenvalues in the millions of Hartree. In the test file MO 2061 sits at
@@ -294,9 +312,28 @@ energies has to tolerate it.
 ## Layout
 
 ```
-orca_vib_viewer.py    everything — parsers, Tk UI, matplotlib canvases
-LICENSE               MIT
+orca_vib_viewer.py              the app: Tk UI, matplotlib canvases; run this
+whalewatcher/
+  freq.py                       geometry, frequencies, normal modes, bond detection
+  loewdin_table.py              ORCA's printed LOEWDIN ORBITAL POPULATIONS PER MO table
+  loewdin_exact.py              exact populations from OVERLAP MATRIX and MOLECULAR ORBITALS
+  groups.py                     group definitions as JSON
+  cli.py                        command-line arguments
+tests/                          pytest suite; tests/data/ holds the ORCA 6.1.1 fixtures
+assets/                         window icon
 ```
+
+## Development
+
+```bash
+pip install pytest
+pytest -q
+```
+
+The parser tests need only numpy and pandas. The GUI smoke test drives the real widgets
+and skips itself when there is no display, so it runs locally but not in CI. To add a
+fixture, put the ORCA input under `tests/data/`, run it, commit both files, and note the
+ORCA version in the filename.
 
 Roughly: `parse_orca_output` handles geometry, frequencies, and normal modes.
 `parse_orca_loewdin_populations_streaming` and its helpers handle populations.
